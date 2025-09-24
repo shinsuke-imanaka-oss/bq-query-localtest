@@ -1,42 +1,10 @@
-# looker_handler.py (修正版 - 動作していた形式をベースに改善)
+# looker_handler.py - 完全版 SHEET_PARAM_SETS（全18シート対応）
 
-import streamlit as st
-import json
-from urllib.parse import quote
-import datetime
-import pandas as pd
-from dashboard_analyzer import get_ai_dashboard_comment
-import os
-
-# --- レポート基本情報 ---
-REPORT_ID = os.environ.get("LOOKER_REPORT_ID")
-if not REPORT_ID:
-    st.error("環境変数LOOKER_REPORT_IDが設定されていません。")
-    st.stop()
-    
-REPORT_SHEETS = {
-    "予算管理": "Gcf9",
-    "サマリー01": "6HI9",
-    "サマリー02": "IH29",
-    "メディア": "GTrk",
-    "デバイス": "kovk",
-    "月別": "Bsvk",
-    "日別": "40vk",
-    "曜日": "hsv3",
-    "キャンペーン": "cYwk",
-    "広告グループ": "1ZWq",
-    "テキストCR": "NfWq",
-    "ディスプレイCR": "p_grkcjbbytd",
-    "キーワード": "imWq",
-    "地域": "ZNdq",
-    "時間": "bXdq",
-    "最終ページURL": "7xXq",
-    "性別": "ctdq",
-    "年齢": "fX53",
-}
-
-# シートごとのパラメータ名のセット（修正版）
+# シートごとのパラメータ名のセット（完全版 - 全18シート対応）
 SHEET_PARAM_SETS = {
+    # ========================================
+    # 管理・サマリー系シート
+    # ========================================
     "予算管理": {
         "date": ["budget.p_start_date", "budget.p_end_date"],
         "media": ["budget.p_media"],
@@ -68,6 +36,10 @@ SHEET_PARAM_SETS = {
         ],
         "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
     },
+
+    # ========================================
+    # 基本分析系シート
+    # ========================================
     "メディア": {
         "date": ["campaign.p_start_date", "campaign.p_end_date"],
         "media": ["campaign.p_media"],
@@ -78,8 +50,24 @@ SHEET_PARAM_SETS = {
         "date": ["device.p_start_date", "device.p_end_date"],
         "media": ["device.p_media"],
         "campaign": ["device.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_device"
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign_device"
     },
+    "キャンペーン": {
+        "date": ["campaign.p_start_date", "campaign.p_end_date"],
+        "media": ["campaign.p_media"],
+        "campaign": ["campaign.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
+    },
+    "広告グループ": {
+        "date": ["adgroup.p_start_date", "adgroup.p_end_date"],
+        "media": ["adgroup.p_media"],
+        "campaign": ["adgroup.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_adgroup"
+    },
+
+    # ========================================
+    # 時間軸分析系シート
+    # ========================================
     "月別": {
         "date": ["campaign.p_start_date", "campaign.p_end_date"],
         "media": ["campaign.p_media"],
@@ -98,30 +86,32 @@ SHEET_PARAM_SETS = {
         "campaign": ["campaign.p_campaign"],
         "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
     },
-    "キャンペーン": {
-        "date": ["campaign.p_start_date", "campaign.p_end_date"],
-        "media": ["campaign.p_media"],
-        "campaign": ["campaign.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
+    "時間": {
+        "date": ["campaign_hourly.p_start_date", "campaign_hourly.p_end_date"],
+        "media": ["campaign_hourly.p_media"],
+        "campaign": ["campaign_hourly.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign_hourly"
     },
-    "広告グループ": {
-        "date": ["adgroup.p_start_date", "adgroup.p_end_date"],
-        "media": ["adgroup.p_media"],
-        "campaign": ["adgroup.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_adgroup"
-    },
+
+    # ========================================
+    # クリエイティブ分析系シート
+    # ========================================
     "テキストCR": {
-        "date": ["ad.p_start_date", "ad.p_end_date"],
-        "media": ["ad.p_media"],
-        "campaign": ["ad.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad"
+        "date": ["text_ad.p_start_date", "text_ad.p_end_date"],
+        "media": ["text_ad.p_media"],
+        "campaign": ["text_ad.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_text_ad"
     },
     "ディスプレイCR": {
-        "date": ["ad.p_start_date", "ad.p_end_date"],
-        "media": ["ad.p_media"],
-        "campaign": ["ad.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad"
+        "date": ["display_ad.p_start_date", "display_ad.p_end_date"],
+        "media": ["display_ad.p_media"],
+        "campaign": ["display_ad.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_display_ad"
     },
+
+    # ========================================
+    # 詳細分析系シート
+    # ========================================
     "キーワード": {
         "date": ["keyword.p_start_date", "keyword.p_end_date"],
         "media": ["keyword.p_media"],
@@ -134,18 +124,16 @@ SHEET_PARAM_SETS = {
         "campaign": ["geo.p_campaign"],
         "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_geo"
     },
-    "時間": {
-        "date": ["campaign_hourly.p_start_date", "campaign_hourly.p_end_date"],
-        "media": ["campaign_hourly.p_media"],
-        "campaign": ["campaign_hourly.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign_hourly"
-    },
     "最終ページURL": {
-        "date": ["final_url.p_start_date", "final_url.p_end_date"],
-        "media": ["final_url.p_media"],
-        "campaign": ["final_url.p_campaign"],
-        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_final_url"
+        "date": ["landing_page.p_start_date", "landing_page.p_end_date"],
+        "media": ["landing_page.p_media"],
+        "campaign": ["landing_page.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_landing_page"
     },
+
+    # ========================================
+    # オーディエンス分析系シート
+    # ========================================
     "性別": {
         "date": ["gender.p_start_date", "gender.p_end_date"],
         "media": ["gender.p_media"],
@@ -157,263 +145,213 @@ SHEET_PARAM_SETS = {
         "media": ["age_range.p_media"],
         "campaign": ["age_range.p_campaign"],
         "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_age_range"
-    },
+    }
 }
 
-@st.cache_data(ttl=43200)
-def get_filter_options(_bq_client, table_id, column_name):
-    """BigQueryからフィルタの選択肢を取得する"""
-    try:
-        query = f"SELECT DISTINCT {column_name} FROM `{table_id}` WHERE {column_name} IS NOT NULL ORDER BY {column_name}"
-        return _bq_client.query(query).to_dataframe()[column_name].tolist()
-    except Exception as e:
-        st.error(f"フィルタオプションの取得中にエラーが発生しました ({column_name}): {e}")
-        return []
+# ========================================
+# データソース別のパラメータパターン定義
+# ========================================
 
-def init_filters():
-    """filtersセッションの初期化"""
-    if "filters" not in st.session_state:
-        st.session_state.filters = {}
+# 各データソースの標準的なパラメータ命名パターン
+DATA_SOURCE_PARAM_PATTERNS = {
+    "budget": {
+        "date": ["budget.p_start_date", "budget.p_end_date"],
+        "media": ["budget.p_media"],
+        "campaign": ["budget.p_campaign"]
+    },
+    "campaign": {
+        "date": ["campaign.p_start_date", "campaign.p_end_date"],
+        "media": ["campaign.p_media"],
+        "campaign": ["campaign.p_campaign"]
+    },
+    "device": {
+        "date": ["device.p_start_date", "device.p_end_date"],
+        "media": ["device.p_media"],
+        "campaign": ["device.p_campaign"]
+    },
+    "geo": {
+        "date": ["geo.p_start_date", "geo.p_end_date"],
+        "media": ["geo.p_media"],
+        "campaign": ["geo.p_campaign"]
+    },
+    "gender": {
+        "date": ["gender.p_start_date", "gender.p_end_date"],
+        "media": ["gender.p_media"],
+        "campaign": ["gender.p_campaign"]
+    },
+    "age_range": {
+        "date": ["age_range.p_start_date", "age_range.p_end_date"],
+        "media": ["age_range.p_media"],
+        "campaign": ["age_range.p_campaign"]
+    },
+    "campaign_hourly": {
+        "date": ["campaign_hourly.p_start_date", "campaign_hourly.p_end_date"],
+        "media": ["campaign_hourly.p_media"],
+        "campaign": ["campaign_hourly.p_campaign"]
+    },
+    "keyword": {
+        "date": ["keyword.p_start_date", "keyword.p_end_date"],
+        "media": ["keyword.p_media"],
+        "campaign": ["keyword.p_campaign"]
+    },
+    "adgroup": {
+        "date": ["adgroup.p_start_date", "adgroup.p_end_date"],
+        "media": ["adgroup.p_media"],
+        "campaign": ["adgroup.p_campaign"]
+    },
+    "text_ad": {
+        "date": ["text_ad.p_start_date", "text_ad.p_end_date"],
+        "media": ["text_ad.p_media"],
+        "campaign": ["text_ad.p_campaign"]
+    },
+    "display_ad": {
+        "date": ["display_ad.p_start_date", "display_ad.p_end_date"],
+        "media": ["display_ad.p_media"],
+        "campaign": ["display_ad.p_campaign"]
+    },
+    "landing_page": {
+        "date": ["landing_page.p_start_date", "landing_page.p_end_date"],
+        "media": ["landing_page.p_media"],
+        "campaign": ["landing_page.p_campaign"]
+    }
+}
 
-    defaults = {
-        "sheet": "メディア",
-        "start_date": datetime.date.today() - datetime.timedelta(days=30),
-        "end_date": datetime.date.today(),
-        "media": [],
-        "campaigns": []
+# ========================================
+# フォールバック機能付きパラメータ取得関数
+# ========================================
+
+def get_sheet_params_with_fallback(sheet_name: str) -> dict:
+    """
+    シート名に対応するパラメータセットを取得（フォールバック機能付き）
+    
+    Args:
+        sheet_name: シート名
+    
+    Returns:
+        パラメータ辞書
+    """
+    # 1. 直接定義されているパラメータセットを確認
+    if sheet_name in SHEET_PARAM_SETS:
+        return SHEET_PARAM_SETS[sheet_name]
+    
+    # 2. シート名からデータソースを推定してフォールバック
+    sheet_lower = sheet_name.lower()
+    
+    # データソース推定ロジック
+    if "予算" in sheet_name or "budget" in sheet_lower:
+        data_source_key = "budget"
+        table_suffix = "budget"
+    elif "デバイス" in sheet_name or "device" in sheet_lower:
+        data_source_key = "device"
+        table_suffix = "campaign_device"
+    elif "地域" in sheet_name or "geo" in sheet_lower:
+        data_source_key = "geo"
+        table_suffix = "geo"
+    elif "性別" in sheet_name or "gender" in sheet_lower:
+        data_source_key = "gender"
+        table_suffix = "gender"
+    elif "年齢" in sheet_name or "age" in sheet_lower:
+        data_source_key = "age_range"
+        table_suffix = "age_range"
+    elif "時間" in sheet_name or "hourly" in sheet_lower or "hour" in sheet_lower:
+        data_source_key = "campaign_hourly"
+        table_suffix = "campaign_hourly"
+    elif "キーワード" in sheet_name or "keyword" in sheet_lower:
+        data_source_key = "keyword"
+        table_suffix = "keyword"
+    elif "広告グループ" in sheet_name or "adgroup" in sheet_lower:
+        data_source_key = "adgroup"
+        table_suffix = "adgroup"
+    elif "テキスト" in sheet_name or "text" in sheet_lower:
+        data_source_key = "text_ad"
+        table_suffix = "text_ad"
+    elif "ディスプレイ" in sheet_name or "display" in sheet_lower:
+        data_source_key = "display_ad"
+        table_suffix = "display_ad"
+    elif "ページ" in sheet_name or "landing" in sheet_lower or "url" in sheet_lower:
+        data_source_key = "landing_page"
+        table_suffix = "landing_page"
+    else:
+        # 最終フォールバック: キャンペーンベーステーブル
+        data_source_key = "campaign"
+        table_suffix = "campaign"
+    
+    # パラメータパターンを取得
+    if data_source_key in DATA_SOURCE_PARAM_PATTERNS:
+        params = DATA_SOURCE_PARAM_PATTERNS[data_source_key].copy()
+        params["data_source"] = f"vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_{table_suffix}"
+        
+        # 警告メッセージ
+        st.warning(f"⚠️ シート '{sheet_name}' のパラメータが未定義のため、推定設定を使用します: {data_source_key}")
+        
+        return params
+    
+    # 最終フォールバック
+    st.error(f"❌ シート '{sheet_name}' のパラメータを決定できませんでした。デフォルト設定を使用します。")
+    return {
+        "date": ["campaign.p_start_date", "campaign.p_end_date"],
+        "media": ["campaign.p_media"],
+        "campaign": ["campaign.p_campaign"],
+        "data_source": "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
     }
 
-    for key, value in defaults.items():
-        if key not in st.session_state.filters:
-            st.session_state.filters[key] = value
+# ========================================
+# パラメータ検証・デバッグ用関数
+# ========================================
 
-def show_filter_ui(bq_client):
-    """サイドバーに表示するフィルタUIを構築し、結果をsession_stateに保存する（修正版）"""
-    init_filters()
+def validate_all_sheet_params():
+    """
+    全シートのパラメータ定義を検証
+    """
+    st.subheader("🔍 パラメータ定義検証結果")
+    
+    total_sheets = len(REPORT_SHEETS)
+    defined_sheets = len(SHEET_PARAM_SETS)
+    
+    st.info(f"📊 総シート数: {total_sheets} / 定義済み: {defined_sheets} / 未定義: {total_sheets - defined_sheets}")
+    
+    # 未定義シートの一覧
+    undefined_sheets = set(REPORT_SHEETS.keys()) - set(SHEET_PARAM_SETS.keys())
+    if undefined_sheets:
+        st.warning(f"⚠️ 未定義シート: {', '.join(sorted(undefined_sheets))}")
+    
+    # 定義済みシートの詳細
+    with st.expander("📋 定義済みシート詳細"):
+        for sheet_name, params in SHEET_PARAM_SETS.items():
+            st.write(f"**{sheet_name}**")
+            st.write(f"  - データソース: `{params.get('data_source', '未設定')}`")
+            st.write(f"  - 日付パラメータ: {len(params.get('date', []))}個")
+            st.write(f"  - メディアパラメータ: {len(params.get('media', []))}個")
+            st.write(f"  - キャンペーンパラメータ: {len(params.get('campaign', []))}個")
 
-    # フィルタの変更を追跡するための古い状態を保存
-    old_filters = st.session_state.filters.copy()
-
-    # ========================================
-    # ダッシュボードシート選択（重要！）
-    # ========================================
-    st.markdown("### 📊 ダッシュボード選択")
+def debug_sheet_params(sheet_name: str):
+    """
+    特定シートのパラメータをデバッグ表示
+    """
+    st.subheader(f"🔍 {sheet_name} のパラメータ詳細")
     
-    sheet_names = list(REPORT_SHEETS.keys())
-    selected_sheet_name = st.selectbox(
-        "表示するレポートシートを選択:",
-        sheet_names,
-        index=sheet_names.index(st.session_state.filters.get("sheet", "メディア")),
-        key="sheet_selector"  # 明示的にキーを設定
-    )
-    st.session_state.filters["sheet"] = selected_sheet_name
-    
-    # 選択されたシートを視覚的に表示
-    st.info(f"📌 選択中: **{selected_sheet_name}**")
-    
-    st.markdown("---")
-
-    # ========================================
-    # 日付フィルタ
-    # ========================================
-    st.markdown("### 📅 日付フィルタ")
-    
-    # クイック日付選択ボタン
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("過去7日", key="quick_7days"):
-            today = datetime.date.today()
-            st.session_state.filters["start_date"] = today - datetime.timedelta(days=7)
-            st.session_state.filters["end_date"] = today
-            st.rerun()
-    
-    with col2:
-        if st.button("過去30日", key="quick_30days"):
-            today = datetime.date.today()
-            st.session_state.filters["start_date"] = today - datetime.timedelta(days=30)
-            st.session_state.filters["end_date"] = today
-            st.rerun()
-    
-    with col3:
-        if st.button("今月", key="quick_this_month"):
-            today = datetime.date.today()
-            st.session_state.filters["start_date"] = today.replace(day=1)
-            st.session_state.filters["end_date"] = today
-            st.rerun()
-    
-    # 手動日付入力
-    start_date = st.date_input(
-        "開始日", 
-        value=st.session_state.filters["start_date"],
-        key="manual_start_date"
-    )
-    end_date = st.date_input(
-        "終了日", 
-        value=st.session_state.filters["end_date"],
-        key="manual_end_date"
-    )
-    
-    st.markdown("---")
-
-    # ========================================
-    # メディア・キャンペーンフィルタ
-    # ========================================
-    st.markdown("### 🎯 メディア・キャンペーンフィルタ")
-    
-    # 選択されたシートに対応するデータソーステーブルを取得
-    sheet_config = SHEET_PARAM_SETS.get(selected_sheet_name, {})
-    table_id_for_filters = sheet_config.get("data_source", "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign")
-    
-    # データソース表示
-    st.caption(f"データソース: {table_id_for_filters.split('.')[-1]}")
-    
-    # フィルタオプション取得
-    media_options = get_filter_options(bq_client, table_id_for_filters, "ServiceNameJA_Media")
-    campaign_options = get_filter_options(bq_client, table_id_for_filters, "CampaignName")
-
-    selected_media = st.multiselect(
-        "メディア",
-        options=media_options,
-        default=st.session_state.filters["media"],
-        key="media_filter"
-    )
-    
-    selected_campaigns = st.multiselect(
-        "キャンペーン",
-        options=campaign_options,
-        default=st.session_state.filters["campaigns"],
-        key="campaign_filter"
-    )
-
-    # ========================================
-    # フィルタリセットボタン
-    # ========================================
-    st.markdown("---")
-    if st.button("🔄 フィルタをリセット", key="reset_filters"):
-        st.session_state.filters.update({
-            "media": [],
-            "campaigns": []
-        })
-        st.rerun()
-
-    # ========================================
-    # 選択状態を保存
-    # ========================================
-    st.session_state.filters.update({
-        "start_date": start_date,
-        "end_date": end_date,
-        "media": selected_media,
-        "campaigns": selected_campaigns
-    })
-    
-    # フィルタの変更を検出して再実行
-    if st.session_state.filters != old_filters:
-        # 変更内容を表示
-        st.success("フィルタが更新されました！")
-        st.rerun()
-
-def show_looker_studio_integration(bq_client, model, key_prefix="", sheet_analysis_queries=None):
-    """Looker Studio統合表示（修正版 - 動作していた形式をベース）"""
-    init_filters()
-
-    selected_sheet_name = st.session_state.filters["sheet"]
-    filters = st.session_state.filters
-    selected_page_id = REPORT_SHEETS[selected_sheet_name]
-    param_sets = SHEET_PARAM_SETS.get(selected_sheet_name, {})
-    
-    # パラメータ辞書を構築（動作していた版と同じ形式）
-    params = {}
-
-    # Streamlitのフィルタ適用がONの場合のみパラメータを渡す
-    if st.session_state.get("apply_streamlit_filters", True):
-        # 日付フィルタ（動作していた版と同じ形式）
-        date_params = param_sets.get("date", [])
-        if date_params and filters.get("start_date") and filters.get("end_date"):
-            start_date_str = filters["start_date"].strftime("%Y%m%d")
-            end_date_str = filters["end_date"].strftime("%Y%m%d")
-            for param_name in date_params:
-                if "start_date" in param_name:
-                    params[param_name] = start_date_str
-                elif "end_date" in param_name:
-                    params[param_name] = end_date_str
-
-        # メディアフィルタ（動作していた版と同じ形式）
-        media_params = param_sets.get("media", [])
-        if filters.get("media"):
-            media_value = ",".join(filters["media"])
-            for param_name in media_params:
-                params[param_name] = media_value
-        else:
-            for param_name in media_params:
-                params[param_name] = ""
-
-        # キャンペーンフィルタ（動作していた版と同じ形式）
-        campaign_params = param_sets.get("campaign", [])
-        if filters.get("campaigns"):
-            campaign_value = ",".join(filters["campaigns"])
-            for param_name in campaign_params:
-                params[param_name] = campaign_value
-        else:
-            for param_name in campaign_params:
-                params[param_name] = ""
-    
-    # URL生成（動作していた版と全く同じ方式）
-    params_json = json.dumps(params)
-    encoded_params = quote(params_json)
-    base_url = f"https://lookerstudio.google.com/embed/reporting/{REPORT_ID}"
-    final_url = f"{base_url}/page/{selected_page_id}?params={encoded_params}"
-
-    # Looker Studioのフィルタを非表示にするパラメータを条件付きで追加
-    if st.session_state.get("apply_streamlit_filters", True):
-        final_url += "&hideFilters=true"
+    if sheet_name in SHEET_PARAM_SETS:
+        params = SHEET_PARAM_SETS[sheet_name]
+        st.success(f"✅ 直接定義されています")
     else:
-        final_url += "&hideFilters=false"
-
-    # デバッグ情報（必要に応じてコメントアウト解除）
-    st.subheader("💡 デバッグ情報")
-    st.write(f"**選択シート:** {selected_sheet_name}")
-    st.write(f"**使用テーブル:** {param_sets.get('data_source', '未設定')}")
-    st.write(f"**パラメータ辞書:** `{params}`")
-    st.write(f"**生成されたURL:** `{final_url}`")
-    st.markdown("---")
-
-    # フィルタ適用状況の表示
-    if st.session_state.get("apply_streamlit_filters", True):
-        applied_filters = []
-        if filters.get("start_date") and filters.get("end_date"):
-            applied_filters.append(f"期間: {filters['start_date']} ～ {filters['end_date']}")
-        if filters.get("media"):
-            applied_filters.append(f"メディア: {', '.join(filters['media'])}")
-        if filters.get("campaigns"):
-            applied_filters.append(f"キャンペーン: {', '.join(filters['campaigns'][:3])}" + 
-                                 ("..." if len(filters['campaigns']) > 3 else ""))
-        
-        if applied_filters:
-            st.info(f"✅ 適用中のフィルタ: {' | '.join(applied_filters)}")
-        else:
-            st.warning("⚠️ フィルタが設定されていません")
+        params = get_sheet_params_with_fallback(sheet_name)
+        st.warning(f"⚠️ フォールバック設定を使用")
+    
+    st.json(params)
+    
+    # パラメータの妥当性チェック
+    required_keys = ["date", "media", "campaign", "data_source"]
+    missing_keys = [key for key in required_keys if key not in params]
+    
+    if missing_keys:
+        st.error(f"❌ 必須キーが不足: {missing_keys}")
     else:
-        st.info("ℹ️ Streamlitフィルタは無効になっています")
+        st.success("✅ 必須キーが全て存在")
 
-    # iframeで表示
-    st.components.v1.iframe(final_url, height=600, scrolling=True)
-    st.markdown("---")
-
-    # AI分析機能
-    st.subheader("🤖 AIによる分析サマリー")
-    with st.spinner("AIが現在の表示内容を分析中です..."):
-        comment = get_ai_dashboard_comment(
-            _bq_client=bq_client,
-            _model=model,
-            sheet_name=st.session_state.filters["sheet"],
-            filters=st.session_state.filters,
-            sheet_analysis_queries=sheet_analysis_queries
-        )
-        st.info(comment)
-
-    # 再生成ボタン
-    if st.button("最新の情報で再生成", key=f"{key_prefix}_regenerate_summary"):
-        get_ai_dashboard_comment.clear()
-        st.rerun()
-
-    return final_url
+# 使用例:
+if __name__ == "__main__":
+    # 全パラメータの検証
+    validate_all_sheet_params()
+    
+    # 特定シートのデバッグ
+    debug_sheet_params("キーワード")
