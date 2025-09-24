@@ -156,9 +156,8 @@ except ImportError as e:
 try:
     from looker_handler import (
         show_looker_studio_integration,
-        init_filters,
-        get_sheet_params_with_fallback,
-        validate_all_sheet_params
+        show_filter_ui, # show_filter_ui をインポートリストに追加
+        init_filters
     )
     IMPORT_STATUS["looker_handler"] = True
     print("✅ looker_handler.py インポート成功")
@@ -213,7 +212,7 @@ except ImportError as e:
 
 # データ品質チェック
 try:
-    from data_quality_checker import run_comprehensive_data_quality_check
+    from data_quality_checker import generate_quality_report as run_comprehensive_data_quality_check
     IMPORT_STATUS["data_quality_checker"] = True
     print("✅ data_quality_checker.py インポート成功")
 except ImportError as e:
@@ -302,7 +301,7 @@ def setup_gemini_client():
         
         # Gemini設定
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-pro")
+        model = genai.GenerativeModel("gemini-2.0-flash-001")
         
         st.success("✅ Gemini API接続成功")
         return model
@@ -345,7 +344,7 @@ def setup_claude_client():
             raise ValueError("Claude API Keyが設定されていません")
         
         client = anthropic.Anthropic(api_key=api_key)
-        model_name = "claude-3-5-sonnet-20241022"
+        model_name = "claude-3-sonnet-20240229"
         
         # 接続テスト
         test_response = client.messages.create(
