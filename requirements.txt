@@ -1,0 +1,20 @@
+# requirements.txt - 必要パッケージ一覧
+
+# 基本ライブラリ
+streamlit>=1.28.0
+pandas>=1.5.0
+numpy>=1.24.0
+plotly>=5.15.0
+
+# Google Cloud関連
+google-cloud-bigquery>=3.11.0
+google-generativeai>=0.3.0
+google-auth>=2.22.0
+google-oauth2-tool>=0.0.3
+
+# AI関連
+anthropic>=0.7.0
+
+# その他
+python-dateutil>=2.8.0
+pytz>=2023.3
