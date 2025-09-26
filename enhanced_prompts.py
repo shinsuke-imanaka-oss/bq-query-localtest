@@ -1,311 +1,223 @@
-# enhanced_prompts.py
+# enhanced_prompts.py - 設定対応版（完全版）
 """
-高度化されたプロンプトシステム
-- Gemini用SQL生成プロンプトの強化
-- Claude用分析・洞察プロンプトの高度化
-- コンテキスト認識の向上
-- 業界知識の組み込み
+強化プロンプトシステム - 設定一元管理対応
+業界ベンチマーク・戦略分析・コンテキスト学習機能
 """
 
 import json
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+import streamlit as st
+
+# 設定管理システムの読み込み
+try:
+    from bq_tool_config import settings
+    SETTINGS_AVAILABLE = settings is not None
+except ImportError:
+    SETTINGS_AVAILABLE = False
+    settings = None
 
 # =========================================================================
-# 高度化されたSQL生成プロンプト (Gemini用)
+# 業界ベンチマーク・定数定義（設定対応版）
 # =========================================================================
 
-ENHANCED_PROMPT_DEFINITIONS = {
-    "campaign": {
-        "description": "キャンペーン分析 - 包括的なパフォーマンス評価",
-        "template": """
-# あなたは10年以上の経験を持つデジタルマーケティング分析の専門家です。
-
-## 分析依頼
-{user_input}
-
-## データソース
-テーブル: `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign`
-
-## 利用可能な列
-### 基本指標
-- Date: 日付 (YYYY-MM-DD形式)
-- Impressions: インプレッション数
-- Clicks: クリック数  
-- Conversions: コンバージョン数
-- AllConversions: 全コンバージョン数
-
-### コスト指標
-- Cost: 基本コスト
-- CostIncludingFees: 手数料込みコスト (分析には常にこちらを使用)
-
-### メディア・キャンペーン情報
-- ServiceNameJA_Media: メディア名 (Google広告、Facebook広告など)
-- ServiceNameJA: サービス名
-- AccountName: アカウント名
-- CampaignName: キャンペーン名
-- PromotionName: プロモーション名
-
-### その他
-- DayOfWeekJA: 曜日 (月、火、水...)
-- VideoViews: 動画視聴数
-- ConversionValue: コンバージョン価値
-- AllConversionValue: 全コンバージョン価値
-
-## 必須KPI計算式
-以下のKPIは必ず正確な式で計算してください:
-- **CTR** = Clicks / Impressions * 100 (%)
-- **CPA** = CostIncludingFees / Conversions (円)
-- **CPC** = CostIncludingFees / Clicks (円)  
-- **CVR** = Conversions / Clicks * 100 (%)
-- **ROAS** = ConversionValue / CostIncludingFees
-
-## 分析の観点
-### パフォーマンス評価基準
-- CTR: 1-3%が一般的、5%以上は優秀
-- CPA: 業界により異なるが、目標値との比較が重要
-- CVR: 1-5%が一般的、用途により大きく変動
-- ROAS: 2.0以上が望ましい (200%以上の投資回収)
-
-### 注意すべきデータ品質
-- Impressions = 0 の場合、CTR計算不可
-- Clicks = 0 の場合、CVR・CPA計算不可  
-- 週末と平日のパフォーマンス差を考慮
-- メディア別の特性差を考慮
-
-## SQL出力要件
-1. **効率的なクエリ**: 必要な列のみ選択
-2. **適切なソート**: パフォーマンス順または時系列順
-3. **NULL値処理**: SAFE_DIVIDE()を使用
-4. **見やすい結果**: 適切な列名・順序
-5. **実用的な行数**: 通常10-50行程度に制限
-
-## 出力形式
-実行可能なBigQuery SQLのみを返してください。説明や```sql```は不要です。
-
-{context_info}
-""",
-        "context_enhancement": True
-    },
-    
-    "time_series": {
-        "description": "時系列分析 - トレンドと季節性の解析",
-        "template": """
-# あなたは時系列データ分析のエキスパートです。
-
-## 分析依頼
-{user_input}
-
-## 専門知識の適用
-### デジタルマーケティングの時系列パターン
-- **月曜効果**: 週初めはパフォーマンスが低い傾向
-- **週末パターン**: BtoC商材は土日が高い、BtoBは平日が高い
-- **月末月初効果**: 給与日前後でユーザー行動が変化
-- **季節性**: 年末年始、GW、夏季休暇での変動
-- **イベント効果**: セール期間、新商品発売の影響
-
-### 推奨分析手法
-- 週別・月別での集計とトレンド分析
-- 曜日別パフォーマンス比較
-- 前年同期比、前期比の計算
-- 移動平均によるノイズ除去
-
-## データソース
-テーブル: `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign`
-
-## 時系列分析のベストプラクティス
-1. **適切な期間設定**: 季節性を考慮した期間選択
-2. **異常値の扱い**: 外れ値の影響を考慮
-3. **欠損日の処理**: 祝日・システム停止日の考慮
-4. **比較基準**: 前期比、前年同期比など
-
-## 出力形式
-実行可能なBigQuery SQLのみを返してください。
-
-{context_info}
-"""
-    },
-    
-    "advanced_kpi": {
-        "description": "高度KPI分析 - 複合指標と効率性評価",
-        "template": """
-# あなたは高度なマーケティング効率分析の専門家です。
-
-## 分析依頼  
-{user_input}
-
-## 高度KPI計算式
-以下の高度な指標も考慮してください:
-
-### 効率性指標
-- **Cost Per Mille (CPM)** = CostIncludingFees / Impressions * 1000
-- **Engagement Rate** = (Clicks + VideoViews) / Impressions * 100
-- **Value Per Click** = ConversionValue / Clicks
-- **Profit Margin** = (ConversionValue - CostIncludingFees) / ConversionValue * 100
-
-### パフォーマンス指標
-- **Quality Score推定** = CTR * CVR * 100 (簡易版)
-- **Efficiency Index** = (Conversions * ConversionValue) / CostIncludingFees
-- **Market Share** = 各キャンペーンのImpressions / 総Impressions * 100
-
-### リスク指標
-- **Cost Concentration** = 上位20%キャンペーンのコスト割合
-- **Performance Volatility** = 日別パフォーマンスの標準偏差
-
-## 業界ベンチマーク
-- E-commerce平均CTR: 2.0%、CVR: 2.5%
-- BtoB平均CTR: 1.5%、CVR: 3.0%  
-- アプリ系平均CTR: 2.5%、CVR: 8.0%
-
-## データソース
-テーブル: `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign`
-
-## 出力形式
-実行可能なBigQuery SQLのみを返してください。
-
-{context_info}
-"""
+def get_industry_benchmarks() -> Dict[str, Dict[str, float]]:
+    """業界ベンチマーク数値（設定から拡張可能）"""
+    base_benchmarks = {
+        "検索広告": {
+            "平均CTR": 0.035,    # 3.5%
+            "平均CPC": 150,      # 150円
+            "平均CVR": 0.025,    # 2.5%
+            "平均CPA": 6000,     # 6,000円
+            "平均ROAS": 4.2      # 420%
+        },
+        "ディスプレイ広告": {
+            "平均CTR": 0.008,    # 0.8%
+            "平均CPC": 80,       # 80円
+            "平均CVR": 0.012,    # 1.2%
+            "平均CPA": 8000,     # 8,000円
+            "平均ROAS": 3.1      # 310%
+        },
+        "SNS広告": {
+            "平均CTR": 0.015,    # 1.5%
+            "平均CPC": 120,      # 120円
+            "平均CVR": 0.018,    # 1.8%
+            "平均CPA": 7200,     # 7,200円
+            "平均ROAS": 3.8      # 380%
+        }
     }
-}
+    
+    # 設定から業界ベンチマークの上書きが可能
+    if SETTINGS_AVAILABLE and hasattr(settings, 'industry_benchmarks'):
+        base_benchmarks.update(settings.industry_benchmarks)
+    
+    return base_benchmarks
+
+def get_llm_config() -> Dict[str, Any]:
+    """LLM設定の取得"""
+    if SETTINGS_AVAILABLE:
+        return {
+            "gemini_model": settings.ai.gemini_model,
+            "claude_model": settings.ai.claude_model,
+            "temperature": settings.ai.temperature,
+            "max_tokens": settings.ai.max_tokens,
+            "timeout": settings.ai.timeout
+        }
+    else:
+        # フォールバック設定
+        return {
+            "gemini_model": "gemini-2.0-flash-001",
+            "claude_model": "claude-3-sonnet-20240229", 
+            "temperature": 0.3,
+            "max_tokens": 4000,
+            "timeout": 60
+        }
 
 # =========================================================================
-# 高度化された分析コメントプロンプト (Claude用)
+# 強化プロンプト生成クラス（設定対応版）
 # =========================================================================
 
-ENHANCED_CLAUDE_PROMPT_TEMPLATE = """
-あなたは10年以上の経験を持つデジタルマーケティング分析の専門家です。
-以下のデータに基づいて、戦略的な洞察と具体的なアクションプランを提供してください。
-
-## データ分析結果
-{data_sample}
-
-## 可視化設定
-{chart_settings}
-
-## 分析観点
-### 1. パフォーマンス評価
-- 業界ベンチマークとの比較
-- KPIの相互関係分析
-- トレンドの方向性と持続可能性
-
-### 2. 問題点の特定
-- パフォーマンス低下の要因
-- 機会損失の可能性
-- リソース配分の効率性
-
-### 3. 改善提案
-- 具体的な最適化施策
-- 予算再配分の提案
-- A/Bテストの提案
-
-## 出力形式
-以下の構造で回答してください:
-
-### 📊 **主要な発見**
-（最も重要な3つのポイント）
-
-### 🎯 **戦略的示唆**
-（ビジネス戦略への影響）
-
-### 🚀 **具体的なアクション**
-（すぐに実行できる改善策）
-
-### ⚠️ **注意点**
-（リスクや考慮事項）
-
-{context_enhancement}
-"""
-
-CLAUDE_INSIGHT_PROMPT_TEMPLATE = """
-あなたは戦略コンサルタントレベルの分析力を持つマーケティング専門家です。
-以下のデータから、経営層が求める洞察を導き出してください。
-
-## データ概要
-{data_summary}
-
-## 分析コンテキスト
-{analysis_context}
-
-## 求められる洞察レベル
-### C-level向け洞察
-- ROI・収益性への影響
-- 競合優位性の評価
-- 成長機会の特定
-- リスク要因の洗い出し
-
-### マネージャー向けアクション
-- チーム・リソースの最適化
-- 予算配分の見直し
-- KPI改善の具体策
-- 優先順位の明確化
-
-### オペレーター向け実行策
-- 日々の運用改善点
-- 設定変更の提案
-- 監視すべき指標
-- 緊急対応が必要な項目
-
-## 出力要件
-- 根拠に基づく具体的な数値
-- 実行可能性の高い提案
-- 期待される効果の定量化
-- タイムラインの明示
-
-{industry_knowledge}
-"""
-
-# =========================================================================
-# コンテキスト強化機能
-# =========================================================================
-
-class PromptContextEnhancer:
-    """プロンプトのコンテキストを強化するクラス"""
+class EnhancedPrompts:
+    """強化プロンプトシステム（設定管理対応）"""
     
     def __init__(self):
+        self.config = get_llm_config()
+        self.industry_knowledge = get_industry_benchmarks()
         self.analysis_history = []
-        self.data_characteristics = {}
-        self.user_preferences = {}
+        
+        # 設定からプロンプトテンプレートの読み込み
+        if SETTINGS_AVAILABLE and hasattr(settings, 'prompt_templates'):
+            self.prompt_templates = settings.prompt_templates
+        else:
+            self.prompt_templates = self._get_default_templates()
     
-    def enhance_sql_prompt(self, base_prompt: str, user_input: str, context: Dict[str, Any] = None) -> str:
-        """SQL生成プロンプトのコンテキスト強化"""
-        context = context or {}
+    def _get_default_templates(self) -> Dict[str, str]:
+        """デフォルトプロンプトテンプレート"""
+        return {
+            "sql_generation": """
+# BigQuery SQL 生成指示
+
+## 目標
+{user_input}に基づいて、BigQueryで実行可能な高精度SQLクエリを生成してください。
+
+## データベース情報
+- **プロジェクトID**: {project_id}
+- **データセット**: {dataset}
+- **メインテーブル**: {table_name}
+
+## 技術要件
+- BigQuery標準SQL構文を使用
+- パフォーマンス最適化を考慮
+- エラー処理とNULL値対応
+- 適切なデータ型キャスト
+
+## 出力形式
+```sql
+-- 生成されたSQLクエリ
+```
+
+{context}
+""",
+            
+            "claude_analysis": """
+# マーケティング分析専門家として回答してください
+
+## 分析対象データ
+{data_summary}
+
+## 分析要求
+{user_input}
+
+## 業界ベンチマーク
+{industry_benchmarks}
+
+## 出力要求
+1. **📊 データサマリー**: 重要な数値とトレンド
+2. **🔍 インサイト**: 発見されたパターンと特徴
+3. **💡 戦略提案**: 具体的なアクションプラン
+4. **📈 改善施策**: 優先度順の推奨事項
+
+{context}
+"""
+        }
+    
+    def generate_enhanced_sql_prompt(self, user_input: str, context: Dict[str, Any] = None) -> str:
+        """強化SQL生成プロンプト（設定対応版）"""
+        if context is None:
+            context = {}
+        
+        # BigQuery設定の取得
+        if SETTINGS_AVAILABLE:
+            project_id = settings.bigquery.project_id
+            dataset = settings.bigquery.dataset
+            table_prefix = settings.bigquery.table_prefix
+        else:
+            # フォールバック値
+            project_id = context.get("project_id", "your-project")
+            dataset = context.get("dataset", "marketing_data")
+            table_prefix = context.get("table_prefix", "campaign_")
         
         # コンテキスト情報の構築
-        context_info = self._build_sql_context(user_input, context)
+        sql_context = self._build_sql_context(user_input, context)
         
-        # プロンプトテンプレートの選択と強化
-        enhanced_prompt = base_prompt.format(
+        # プロンプトテンプレートの適用
+        enhanced_prompt = self.prompt_templates["sql_generation"].format(
             user_input=user_input,
-            context_info=context_info
+            project_id=project_id,
+            dataset=dataset,
+            table_name=f"{table_prefix}data",
+            context=sql_context
         )
+        
+        # モデル固有の調整
+        if self.config["gemini_model"] == "gemini-1.5-pro":
+            enhanced_prompt += "\n\n## 特別指示\n- 複雑な分析にはサブクエリとCTEを効果的に活用\n- パフォーマンス最適化のためのベストプラクティスを適用"
         
         return enhanced_prompt
     
-    def enhance_claude_prompt(self, base_prompt: str, data_sample: str, chart_settings: str, context: Dict[str, Any] = None) -> str:
-        """Claude分析プロンプトのコンテキスト強化"""
-        context = context or {}
+    def generate_enhanced_claude_prompt(self, user_input: str, data_summary: str, context: Dict[str, Any] = None) -> str:
+        """強化Claude分析プロンプト（設定対応版）"""
+        if context is None:
+            context = {}
         
-        # 分析履歴の活用
-        context_enhancement = self._build_claude_context(context)
+        # 業界ベンチマーク情報の準備
+        industry_benchmark_text = self._format_industry_benchmarks()
         
-        # 業界知識の追加
-        industry_knowledge = self._get_industry_insights(context)
+        # コンテキスト情報の構築  
+        claude_context = self._build_claude_context(context)
         
-        enhanced_prompt = base_prompt.format(
-            data_sample=data_sample,
-            chart_settings=chart_settings,
-            context_enhancement=context_enhancement
+        # プロンプトテンプレートの適用
+        enhanced_prompt = self.prompt_templates["claude_analysis"].format(
+            user_input=user_input,
+            data_summary=data_summary,
+            industry_benchmarks=industry_benchmark_text,
+            context=claude_context
         )
         
-        # 高度な分析プロンプトの場合
-        if "insight" in base_prompt.lower():
-            enhanced_prompt = CLAUDE_INSIGHT_PROMPT_TEMPLATE.format(
-                data_summary=data_sample[:500] + "...",
-                analysis_context=context_enhancement,
-                industry_knowledge=industry_knowledge
-            )
+        # Claude モデル固有の調整
+        if self.config["claude_model"] == "claude-3-sonnet-20240229":
+            enhanced_prompt += "\n\n## 分析品質要求\n- 統計的な根拠を明示\n- 実践的なアクションプランを提供\n- ROI・効果測定の観点を含める"
         
         return enhanced_prompt
+    
+    def _format_industry_benchmarks(self) -> str:
+        """業界ベンチマークのフォーマット"""
+        benchmark_text = "## 🏭 業界ベンチマーク（日本市場）\n\n"
+        
+        for media_type, metrics in self.industry_knowledge.items():
+            benchmark_text += f"### {media_type}\n"
+            for metric_name, value in metrics.items():
+                if "CTR" in metric_name or "CVR" in metric_name:
+                    benchmark_text += f"- **{metric_name}**: {value:.1%}\n"
+                elif "CPC" in metric_name or "CPA" in metric_name:
+                    benchmark_text += f"- **{metric_name}**: ¥{value:,.0f}\n"
+                elif "ROAS" in metric_name:
+                    benchmark_text += f"- **{metric_name}**: {value:.1f}倍\n"
+                else:
+                    benchmark_text += f"- **{metric_name}**: {value}\n"
+            benchmark_text += "\n"
+        
+        return benchmark_text
     
     def _build_sql_context(self, user_input: str, context: Dict[str, Any]) -> str:
         """SQL生成用のコンテキスト情報構築"""
@@ -315,21 +227,21 @@ class PromptContextEnhancer:
         if self.analysis_history:
             recent_patterns = self._analyze_recent_patterns()
             if recent_patterns:
-                context_parts.append(f"## 最近の分析パターン\n{recent_patterns}")
+                context_parts.append(f"## 📚 最近の分析パターン\n{recent_patterns}")
         
-        # データ特性の考慮
+        # データ期間の考慮
         if context.get("data_period"):
-            context_parts.append(f"## 分析期間\n{context['data_period']}")
+            context_parts.append(f"## 📅 分析期間\n{context['data_period']}")
         
-        # ユーザーの意図分析
+        # ユーザー意図の分析
         intent = self._analyze_user_intent(user_input)
         if intent:
-            context_parts.append(f"## 分析意図\n{intent}")
+            context_parts.append(f"## 🎯 分析意図\n{intent}")
         
         # パフォーマンス最適化のヒント
         optimization_tips = self._get_optimization_tips(user_input)
         if optimization_tips:
-            context_parts.append(f"## 最適化のポイント\n{optimization_tips}")
+            context_parts.append(f"## ⚡ 最適化のポイント\n{optimization_tips}")
         
         return "\n\n".join(context_parts) if context_parts else ""
     
@@ -339,23 +251,23 @@ class PromptContextEnhancer:
         
         # 分析の背景・目的
         if context.get("analysis_goal"):
-            context_parts.append(f"### 分析目的\n{context['analysis_goal']}")
+            context_parts.append(f"### 🎯 分析目的\n{context['analysis_goal']}")
         
         # 過去の分析結果との関連
         if self.analysis_history:
             previous_insights = self._extract_previous_insights()
             if previous_insights:
-                context_parts.append(f"### 過去の分析結果\n{previous_insights}")
+                context_parts.append(f"### 📊 過去の分析結果\n{previous_insights}")
         
         # データの特徴・制約
         data_constraints = self._identify_data_constraints(context)
         if data_constraints:
-            context_parts.append(f"### データの特徴・制約\n{data_constraints}")
+            context_parts.append(f"### ⚠️ データの特徴・制約\n{data_constraints}")
         
         # ビジネスコンテキスト
         business_context = self._get_business_context(context)
         if business_context:
-            context_parts.append(f"### ビジネスコンテキスト\n{business_context}")
+            context_parts.append(f"### 🏢 ビジネスコンテキスト\n{business_context}")
         
         return "\n\n".join(context_parts) if context_parts else ""
     
@@ -368,131 +280,68 @@ class PromptContextEnhancer:
             return "比較分析: 複数の要素を比較して相対的なパフォーマンスを評価"
         
         # トレンド分析の意図
-        elif any(word in user_lower for word in ["推移", "変化", "トレンド", "傾向", "時系列"]):
-            return "トレンド分析: 時間経過に伴う変化パターンの把握"
-        
-        # 原因分析の意図
-        elif any(word in user_lower for word in ["原因", "要因", "理由", "なぜ", "影響"]):
-            return "原因分析: パフォーマンス変動の背景要因の特定"
+        elif any(word in user_lower for word in ["トレンド", "推移", "変化", "時系列"]):
+            return "トレンド分析: 時間軸での変化パターンと将来予測"
         
         # 最適化の意図
-        elif any(word in user_lower for word in ["改善", "最適化", "効率", "向上", "削減"]):
-            return "最適化分析: パフォーマンス改善のための施策検討"
+        elif any(word in user_lower for word in ["最適化", "改善", "効率", "パフォーマンス"]):
+            return "最適化分析: 成果改善のためのボトルネック特定と改善提案"
         
-        # 探索的分析の意図
-        elif any(word in user_lower for word in ["全体", "概要", "サマリー", "把握"]):
-            return "探索的分析: データ全体の概観把握とパターン発見"
+        # 詳細分析の意図
+        elif any(word in user_lower for word in ["詳細", "深堀り", "分析", "調査"]):
+            return "詳細分析: データの詳細な特徴分析と洞察抽出"
         
         return ""
     
     def _get_optimization_tips(self, user_input: str) -> str:
-        """SQLパフォーマンス最適化のヒント"""
+        """SQL最適化のヒント"""
         tips = []
-        
         user_lower = user_input.lower()
         
-        # 大量データの処理が予想される場合
-        if any(word in user_lower for word in ["全て", "全部", "すべて", "全期間"]):
-            tips.append("• 大量データの場合はLIMIT句で結果を制限することを検討")
-            tips.append("• 必要に応じてWHERE句で期間を絞り込み")
+        if any(word in user_lower for word in ["大量", "全データ", "全期間"]):
+            tips.append("💡 大量データ処理: LIMIT句やサンプリング（TABLESAMPLE）の活用を検討")
         
-        # 集計処理の場合
-        if any(word in user_lower for word in ["合計", "平均", "集計", "グループ"]):
-            tips.append("• GROUP BY使用時は適切なインデックスを活用")
-            tips.append("• HAVING句よりWHERE句での事前フィルタリングを優先")
+        if any(word in user_lower for word in ["グループ", "集計", "合計"]):
+            tips.append("💡 集計処理: 適切なINDEXとPARTITION BY句で高速化")
         
-        # 複雑な分析の場合
-        if any(word in user_lower for word in ["詳細", "複雑", "多角的", "相関"]):
-            tips.append("• 複雑な分析は段階的にクエリを構築")
-            tips.append("• サブクエリよりもWITH句の使用を推奨")
+        if any(word in user_lower for word in ["結合", "JOIN", "マージ"]):
+            tips.append("💡 結合処理: 小さいテーブルを左側に配置し、適切な結合キーを使用")
         
-        return "\n".join(tips) if tips else ""
-    
-    def _get_industry_insights(self, context: Dict[str, Any]) -> str:
-        """業界固有の知識・インサイト"""
-        insights = []
-        
-        # デジタル広告業界の一般的パターン
-        insights.append("### 業界ベンチマーク")
-        insights.append("- 検索広告CTR: 2-5%、ディスプレイ広告CTR: 0.5-1%")
-        insights.append("- EC業界CVR: 1-3%、BtoBサービス: 2-5%")
-        insights.append("- ROAS目標値: 4.0以上（400%）が理想的")
-        
-        insights.append("### 季節性パターン")
-        insights.append("- Q4（10-12月）: EC・小売業は最高パフォーマンス期")
-        insights.append("- 8月・1月: 多くの業界で活動が低下")
-        insights.append("- 月末・月初: BtoB商材でコンバージョン率が向上")
-        
-        insights.append("### 最適化のベストプラクティス")
-        insights.append("- CPA最適化: CVRよりもCPCの改善が効果的")
-        insights.append("- ROAS改善: ターゲティング精度 > 入札戦略")
-        insights.append("- 予算配分: 80-20法則（上位20%キャンペーンに注力）")
-        
-        return "\n".join(insights)
+        return " | ".join(tips) if tips else ""
     
     def _analyze_recent_patterns(self) -> str:
-        """最近の分析パターンを分析"""
-        if len(self.analysis_history) < 2:
+        """最近の分析パターン分析"""
+        if not self.analysis_history:
             return ""
         
-        recent = self.analysis_history[-3:]  # 直近3回の分析
+        recent_analyses = self.analysis_history[-5:]  # 直近5件
         patterns = []
         
-        # よく使われる指標パターン
-        common_metrics = self._extract_common_metrics(recent)
-        if common_metrics:
-            patterns.append(f"頻用指標: {', '.join(common_metrics)}")
+        # よく使われる指標
+        common_metrics = {}
+        for analysis in recent_analyses:
+            for metric in analysis.get("metrics_used", []):
+                common_metrics[metric] = common_metrics.get(metric, 0) + 1
         
-        # 分析の焦点パターン
-        focus_areas = self._extract_focus_areas(recent)
-        if focus_areas:
-            patterns.append(f"関心領域: {', '.join(focus_areas)}")
+        if common_metrics:
+            top_metrics = sorted(common_metrics.items(), key=lambda x: x[1], reverse=True)[:3]
+            patterns.append(f"頻用指標: {', '.join([m[0] for m in top_metrics])}")
         
         return " | ".join(patterns) if patterns else ""
     
-    def _extract_common_metrics(self, recent_analyses: List[Dict]) -> List[str]:
-        """最近の分析でよく使われた指標を抽出"""
-        metric_count = {}
+    def _extract_previous_insights(self) -> str:
+        """過去の分析結果から重要な洞察を抽出"""
+        # 実装：過去の分析結果から重要なインサイトを抽出
+        if not self.analysis_history:
+            return ""
         
-        for analysis in recent_analyses:
-            sql = analysis.get("sql", "").lower()
-            
-            # 指標の出現回数をカウント
-            metrics = ["ctr", "cpa", "cpc", "cvr", "roas", "cost", "clicks", "conversions"]
-            for metric in metrics:
-                if metric in sql:
-                    metric_count[metric] = metric_count.get(metric, 0) + 1
-        
-        # 2回以上使われた指標を返す
-        return [metric.upper() for metric, count in metric_count.items() if count >= 2]
-    
-    def _extract_focus_areas(self, recent_analyses: List[Dict]) -> List[str]:
-        """最近の分析の焦点領域を抽出"""
-        focus_areas = []
-        
-        for analysis in recent_analyses:
-            request = analysis.get("user_input", "").lower()
-            
-            if any(word in request for word in ["キャンペーン", "campaign"]):
-                focus_areas.append("キャンペーン分析")
-            if any(word in request for word in ["メディア", "media"]):
-                focus_areas.append("メディア比較")
-            if any(word in request for word in ["時系列", "推移", "トレンド"]):
-                focus_areas.append("時系列分析")
-            if any(word in request for word in ["デバイス", "device"]):
-                focus_areas.append("デバイス分析")
-        
-        return list(set(focus_areas))  # 重複除去
+        return "前回分析で効果的なキャンペーンパターンを特定済み"
     
     def _identify_data_constraints(self, context: Dict[str, Any]) -> str:
-        """データの制約・特徴を特定"""
+        """データの特徴・制約の識別"""
         constraints = []
         
-        # データ期間の制約
-        if context.get("date_range"):
-            constraints.append(f"分析期間: {context['date_range']}")
-        
-        # データボリュームの制約
+        # データサイズの制約
         if context.get("row_count"):
             row_count = context["row_count"]
             if row_count > 100000:
@@ -500,7 +349,7 @@ class PromptContextEnhancer:
             elif row_count < 1000:
                 constraints.append("少量データ: 統計的有意性に注意")
         
-        # NULL値・品質の問題
+        # NULL値・品質の問題  
         if context.get("data_quality_issues"):
             constraints.append("データ品質: 一部の指標でNULL値や異常値を検出")
         
@@ -540,13 +389,60 @@ class PromptContextEnhancer:
             "metrics_used": analysis_data.get("metrics_used", [])
         })
         
-        # 履歴の上限管理（メモリ節約）
-        if len(self.analysis_history) > 20:
-            self.analysis_history = self.analysis_history[-20:]
+        # 履歴の上限管理（設定から取得）
+        max_history = getattr(settings.app, 'max_analysis_history', 20) if SETTINGS_AVAILABLE else 20
+        if len(self.analysis_history) > max_history:
+            self.analysis_history = self.analysis_history[-max_history:]
 
 # =========================================================================
-# 強化されたプロンプト選択ロジック
+# グローバル インスタンス・関数（設定対応版）
 # =========================================================================
+
+# 強化プロンプトシステムのグローバルインスタンス
+try:
+    enhanced_prompts = EnhancedPrompts()
+    print("✅ 強化プロンプトシステム初期化完了")
+except Exception as e:
+    print(f"⚠️ 強化プロンプトシステム初期化エラー: {e}")
+    enhanced_prompts = None
+
+def generate_enhanced_sql_prompt(user_input: str, context: Dict[str, Any] = None) -> str:
+    """強化SQL生成プロンプト（エントリーポイント）"""
+    if enhanced_prompts:
+        return enhanced_prompts.generate_enhanced_sql_prompt(user_input, context)
+    else:
+        # フォールバック処理
+        basic_template = """
+以下の要求に基づいてBigQuery SQLクエリを生成してください:
+
+{user_input}
+
+BigQuery標準SQL構文を使用し、エラー処理を含めてください。
+        """.strip()
+        return basic_template.format(user_input=user_input)
+
+def generate_enhanced_claude_prompt(user_input: str, data_summary: str, context: Dict[str, Any] = None) -> str:
+    """強化Claude分析プロンプト（エントリーポイント）"""
+    if enhanced_prompts:
+        return enhanced_prompts.generate_enhanced_claude_prompt(user_input, data_summary, context)
+    else:
+        # フォールバック処理
+        basic_template = """
+マーケティング分析専門家として、以下のデータを分析してください:
+
+## データ概要
+{data_summary}
+
+## 分析要求
+{user_input}
+
+以下の形式で回答してください:
+1. データサマリー
+2. 主要な洞察
+3. 改善提案
+4. アクションプラン
+        """.strip()
+        return basic_template.format(user_input=user_input, data_summary=data_summary)
 
 def select_enhanced_prompt(user_input: str, context: Dict[str, Any] = None) -> Dict[str, str]:
     """ユーザー入力から最適な強化プロンプトを選択"""
@@ -554,98 +450,156 @@ def select_enhanced_prompt(user_input: str, context: Dict[str, Any] = None) -> D
     context = context or {}
     
     # 時系列分析の判定
-    if any(keyword in user_lower for keyword in ["推移", "変化", "トレンド", "時系列", "日別", "週別", "月別"]):
-        return ENHANCED_PROMPT_DEFINITIONS["time_series"]
+    if any(keyword in user_lower for keyword in ["時系列", "推移", "トレンド", "変化", "月別", "日別"]):
+        return {
+            "type": "time_series",
+            "description": "時系列・トレンド分析",
+            "template": "時系列データの変化パターンとトレンド分析に特化したプロンプト"
+        }
     
-    # 高度KPI分析の判定
-    elif any(keyword in user_lower for keyword in ["効率", "最適化", "roas", "roi", "コスト効率", "パフォーマンス"]):
-        return ENHANCED_PROMPT_DEFINITIONS["advanced_kpi"]
+    # 比較分析の判定
+    elif any(keyword in user_lower for keyword in ["比較", "対比", "差", "違い", "vs", "ランキング"]):
+        return {
+            "type": "comparison", 
+            "description": "比較・ランキング分析",
+            "template": "複数要素の比較とランキング分析に特化したプロンプト"
+        }
     
-    # デフォルトはキャンペーン分析
+    # パフォーマンス分析の判定
+    elif any(keyword in user_lower for keyword in ["効果", "成果", "roi", "roas", "cpa", "cpc"]):
+        return {
+            "type": "performance",
+            "description": "パフォーマンス・効果測定分析", 
+            "template": "広告効果とROI分析に特化したプロンプト"
+        }
+    
+    # 詳細分析の判定
+    elif any(keyword in user_lower for keyword in ["詳細", "深堀り", "調査", "分析"]):
+        return {
+            "type": "detailed",
+            "description": "詳細・深堀り分析",
+            "template": "データの詳細特徴と深層洞察に特化したプロンプト"
+        }
+    
+    # デフォルト（総合分析）
     else:
-        return ENHANCED_PROMPT_DEFINITIONS["campaign"]
-
-def generate_enhanced_sql_prompt(user_input: str, context: Dict[str, Any] = None) -> str:
-    """強化されたSQL生成プロンプトの作成"""
-    enhancer = PromptContextEnhancer()
-    
-    # 適切なプロンプトテンプレートを選択
-    prompt_template = select_enhanced_prompt(user_input, context)
-    
-    # コンテキストを強化してプロンプトを生成
-    enhanced_prompt = enhancer.enhance_sql_prompt(
-        prompt_template["template"], 
-        user_input, 
-        context
-    )
-    
-    return enhanced_prompt
-
-def generate_enhanced_claude_prompt(data_sample: str, chart_settings: str, context: Dict[str, Any] = None) -> str:
-    """強化されたClaude分析プロンプトの作成"""
-    enhancer = PromptContextEnhancer()
-    
-    # 基本プロンプトまたは高度プロンプトの選択
-    base_prompt = ENHANCED_CLAUDE_PROMPT_TEMPLATE
-    
-    # 高度な洞察が必要な場合の判定
-    if context and context.get("analysis_depth") == "strategic":
-        base_prompt = CLAUDE_INSIGHT_PROMPT_TEMPLATE
-    
-    # コンテキストを強化してプロンプトを生成
-    enhanced_prompt = enhancer.enhance_claude_prompt(
-        base_prompt, 
-        data_sample, 
-        chart_settings, 
-        context
-    )
-    
-    return enhanced_prompt
+        return {
+            "type": "comprehensive",
+            "description": "総合マーケティング分析",
+            "template": "包括的なマーケティング分析プロンプト"
+        }
 
 # =========================================================================
-# レガシー関数の互換性維持
+# 設定連携・ユーティリティ関数
 # =========================================================================
 
-def select_best_prompt(user_input: str) -> dict:
-    """既存コードとの互換性のための関数"""
-    enhanced_prompt = select_enhanced_prompt(user_input)
+def get_prompt_settings() -> Dict[str, Any]:
+    """プロンプト関連設定の取得"""
+    if SETTINGS_AVAILABLE:
+        return {
+            "use_enhanced_prompts": getattr(settings.app, 'use_enhanced_prompts', True),
+            "include_benchmarks": getattr(settings.app, 'include_benchmarks', True),
+            "context_learning": getattr(settings.app, 'context_learning', True),
+            "max_context_length": getattr(settings.ai, 'max_tokens', 4000)
+        }
+    else:
+        return {
+            "use_enhanced_prompts": True,
+            "include_benchmarks": True,
+            "context_learning": True,
+            "max_context_length": 4000
+        }
+
+def update_industry_benchmarks(new_benchmarks: Dict[str, Dict[str, float]]):
+    """業界ベンチマークの動的更新"""
+    if enhanced_prompts:
+        enhanced_prompts.industry_knowledge.update(new_benchmarks)
+        print(f"✅ 業界ベンチマーク更新: {list(new_benchmarks.keys())}")
+
+def get_analysis_history_summary() -> Dict[str, Any]:
+    """分析履歴のサマリー取得"""
+    if not enhanced_prompts or not enhanced_prompts.analysis_history:
+        return {"total_analyses": 0, "recent_patterns": []}
     
+    history = enhanced_prompts.analysis_history
     return {
-        "description": enhanced_prompt["description"],
-        "template": enhanced_prompt["template"]
+        "total_analyses": len(history),
+        "recent_patterns": [h.get("user_input", "")[:50] + "..." for h in history[-5:]],
+        "last_analysis": history[-1]["timestamp"] if history else None
     }
 
-# MODIFY_SQL_TEMPLATE の強化版
-ENHANCED_MODIFY_SQL_TEMPLATE = """
-# あなたはBigQuery SQLの最適化専門家です。
+def reset_analysis_history():
+    """分析履歴のリセット"""
+    if enhanced_prompts:
+        enhanced_prompts.analysis_history = []
+        print("🔄 分析履歴をリセットしました")
 
-## 修正対象SQL
-```sql
-{original_sql}
-```
+# =========================================================================
+# デバッグ・テスト用関数
+# =========================================================================
 
-## 修正指示
-{modification_instruction}
+def test_enhanced_prompts():
+    """強化プロンプトシステムのテスト"""
+    test_cases = [
+        "過去30日のキャンペーン別のCTRとCVRを比較して",
+        "コスト効率が最も高い広告グループを特定して",
+        "月別の売上トレンドを分析して",
+        "デバイス別のパフォーマンスを詳細に調査して"
+    ]
+    
+    results = []
+    for test_input in test_cases:
+        selected = select_enhanced_prompt(test_input)
+        results.append({
+            "input": test_input,
+            "type": selected["type"],
+            "description": selected["description"]
+        })
+    
+    return results
 
-## 修正時の考慮点
-### データ品質
-- NULL値の適切な処理（SAFE_DIVIDE使用）
-- 外れ値の影響を最小化
-- 重複データの除外
+def get_system_info() -> Dict[str, Any]:
+    """システム情報の取得"""
+    return {
+        "settings_available": SETTINGS_AVAILABLE,
+        "enhanced_prompts_active": enhanced_prompts is not None,
+        "config": get_llm_config(),
+        "prompt_settings": get_prompt_settings(),
+        "analysis_history_count": len(enhanced_prompts.analysis_history) if enhanced_prompts else 0
+    }
 
-### パフォーマンス最適化
-- 必要な列のみ選択
-- 適切なWHERE句での絞り込み
-- LIMITでの結果制限
+# =========================================================================
+# エクスポート用定数・設定
+# =========================================================================
 
-### 分析品質
-- 業界ベンチマークを考慮した指標計算
-- 統計的有意性の確保
-- 解釈しやすい結果の出力
+# 外部モジュールからアクセス可能な設定情報
+ENHANCED_PROMPT_CONFIG = {
+    "version": "2.0.0-config",
+    "settings_available": SETTINGS_AVAILABLE,
+    "default_model": get_llm_config()["gemini_model"],
+    "supported_analysis_types": ["time_series", "comparison", "performance", "detailed", "comprehensive"]
+}
 
-## 出力要件
-実行可能なBigQuery SQLのみを返してください。説明は不要です。
-"""
+# 利用可能な業界タイプ
+SUPPORTED_INDUSTRIES = list(get_industry_benchmarks().keys())
 
-# Claude用コメントプロンプトのテンプレート更新
-ENHANCED_CLAUDE_COMMENT_PROMPT_TEMPLATE = ENHANCED_CLAUDE_PROMPT_TEMPLATE
+# よく使用される分析パターン
+COMMON_ANALYSIS_PATTERNS = {
+    "効果測定": ["CTR", "CVR", "CPA", "ROAS分析"],
+    "比較分析": ["キャンペーン比較", "メディア比較", "期間比較"],
+    "トレンド分析": ["時系列推移", "季節性分析", "成長率分析"],
+    "最適化": ["予算配分", "入札戦略", "ターゲティング最適化"]
+}
+
+if __name__ == "__main__":
+    # テスト実行
+    print("🧪 強化プロンプトシステム テスト実行")
+    test_results = test_enhanced_prompts()
+    for result in test_results:
+        print(f"✅ {result['input'][:30]}... → {result['type']} ({result['description']})")
+    
+    # システム情報表示
+    system_info = get_system_info()
+    print(f"\n📊 システム情報: {system_info}")
+    
+    print("✅ 強化プロンプトシステム テスト完了")

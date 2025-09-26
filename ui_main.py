@@ -12,6 +12,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
+from error_handler import handle_error_with_ai
 
 # =========================================================================
 # 安全なインポート処理
@@ -379,32 +380,32 @@ def execute_main_analysis(user_input: str):
         sheet_analysis_queries = {}  # Looker連携用（将来の拡張）
         
         success = run_analysis_flow(
-            gemini_model,
-            claude_client, 
-            claude_model_name,
-            user_input,
-            sheet_analysis_queries
+            gemini_model=gemini_model,
+            user_input=user_input,
+            prompt_system=st.session_state.prompt_system,
+            selected_ai=st.session_state.selected_ai,
+            bq_client=bq_client
         )
         
         if success:
             st.success("✅ 分析が完了しました")
         
     except Exception as e:
-        st.error(f"❌ 分析実行エラー: {e}")
+
+        # AIに渡すためのコンテキスト情報を準備
+        error_context = {
+            "user_input": user_input,
+            "generated_sql": st.session_state.get("last_sql", "SQL生成前にエラーが発生"),
+            "ai_selection": st.session_state.selected_ai,
+            "prompt_system": st.session_state.prompt_system
+        }
         
-        # エラーハンドリング
-        try:
-            from error_handler import handle_application_error
-            handle_application_error(e, {
-                "user_input": user_input,
-                "operation": "main_analysis",
-                "ai_selection": st.session_state.selected_ai,
-                "prompt_system": st.session_state.prompt_system
-            })
-        except ImportError:
-            # フォールバック
-            st.error("エラー詳細:")
-            st.code(str(e))
+        # AIエラーハンドラを呼び出し
+        handle_error_with_ai(
+            e=e, 
+            model=st.session_state.get('gemini_model'), 
+            context=error_context
+        )
     
     finally:
         # 分析完了状態にリセット
@@ -456,14 +457,19 @@ def execute_manual_sql(sql: str):
             st.warning("⚠️ クエリ結果が空です")
             
     except Exception as e:
-        st.error(f"❌ SQL実行エラー: {e}")
+
+        # AIに渡すためのコンテキスト情報を準備
+        error_context = {
+            "user_input": "手動SQL実行",
+            "generated_sql": sql
+        }
         
-        # エラーハンドリング
-        try:
-            from error_handler import handle_application_error
-            handle_application_error(e, {"sql": sql, "operation": "manual_sql"})
-        except ImportError:
-            st.code(str(e))
+        # AIエラーハンドラを呼び出し
+        handle_error_with_ai(
+            e=e,
+            model=st.session_state.get('gemini_model'),
+            context=error_context
+        )
 
 # =========================================================================
 # 結果表示UI
