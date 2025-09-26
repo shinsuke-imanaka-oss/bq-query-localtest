@@ -496,7 +496,7 @@ def show_fallback_dashboard():
     if st.session_state.get("last_analysis_result") is not None:
         st.markdown("### 📊 最新の分析結果")
         df = st.session_state.last_analysis_result
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width='stretch')
         
         # 基本統計
         if len(df.select_dtypes(include=['number']).columns) > 0:
@@ -533,7 +533,7 @@ def show_semantic_search_ui():
     # 検索UI
     target_campaign = st.selectbox("基準となるキャンペーンを選択してください", options=all_campaigns)
 
-    if st.button("類似キャンペーンを検索する", use_container_width=True):
+    if st.button("類似キャンペーンを検索する", width='stretch'):
         if target_campaign:
             from semantic_analyzer import generate_embeddings, find_similar_texts
             
@@ -546,7 +546,7 @@ def show_semantic_search_ui():
                 
                 if similar_campaigns_df is not None:
                     st.success("類似キャンペーンが見つかりました:")
-                    st.dataframe(similar_campaigns_df, use_container_width=True)
+                    st.dataframe(similar_campaigns_df, width='stretch')
         else:
             st.error("基準となるキャンペーンを選択してください。")
 
@@ -703,7 +703,7 @@ def main():
         st.markdown("### 🔌 API接続")
         
         # BigQuery接続
-        if st.button("🔄 BigQuery接続", use_container_width=True):
+        if st.button("🔄 BigQuery接続", width='stretch'):
             try: # ← try を追加
                 with st.spinner("BigQuery接続中..."):
                     bq_client = setup_bigquery_client()
@@ -713,7 +713,7 @@ def main():
                 handle_error_with_ai(e, st.session_state.get("gemini_model"), {"operation": "BigQuery接続ボタン"})
         
         # Gemini接続
-        if st.button("🔄 Gemini接続", use_container_width=True):
+        if st.button("🔄 Gemini接続", width='stretch'):
             try: # ← try を追加
                 with st.spinner("Gemini API接続中..."):
                     gemini_model = setup_gemini_client()
@@ -723,7 +723,7 @@ def main():
                 handle_error_with_ai(e, None, {"operation": "Gemini接続ボタン"})
 
         # Claude接続
-        if st.button("🔄 Claude接続", use_container_width=True):
+        if st.button("🔄 Claude接続", width='stretch'):
             try: # ← try を追加
                 with st.spinner("Claude API接続中..."):
                     claude_client, claude_model_name = setup_claude_client()
@@ -735,7 +735,7 @@ def main():
 
         st.markdown("---")
 
-        if st.button("⚙️ システム設定", use_container_width=True):
+        if st.button("⚙️ システム設定", width='stretch'):
             st.session_state.show_config_panel = True
             st.rerun()
         
@@ -757,44 +757,6 @@ def main():
             current_debug = st.session_state.get("debug_mode", False)
         
         st.session_state.debug_mode = st.checkbox("🐛 デバッグモード", value=current_debug)
-
-        # デバッグモードがオンの場合のみ、開発用テストボタンを表示
-        if st.session_state.debug_mode:
-            st.markdown("### 🧪 開発用テスト")
-            if st.button("セマンティック分析テスト", use_container_width=True):
-                try:
-                    from semantic_analyzer import generate_embeddings
-                    
-                    # テスト用のサンプルデータ
-                    sample_texts = [
-                        "夏の終わりの大感謝セール！全品50%オフ！",
-                        "期間限定サマーセール開催中！",
-                        "秋の新作コレクションが登場しました。",
-                        "冬物コート早期予約キャンペーン"
-                    ]
-                    
-                    st.info("エンベディング生成をテストします...")
-                    embedding_results = generate_embeddings(sample_texts)
-                    
-                    if embedding_results:
-                        st.success("✅ エンベディング生成成功！")
-                        
-                        # 最初のテキストの結果を表示
-                        first_text = sample_texts[0]
-                        first_vector = embedding_results[first_text]
-                        
-                        st.json({
-                            "テキスト": first_text,
-                            "ベクトル次元数": len(first_vector),
-                            "ベクトル（最初の5次元）": first_vector[:5]
-                        })
-                    else:
-                        st.error("❌ エンベディング生成に失敗しました。")
-
-                except ImportError:
-                    st.error("❌ semantic_analyzer.py のインポートに失敗しました。")
-                except Exception as e:
-                    st.error(f"テスト中にエラーが発生: {e}")
 
         if st.session_state.debug_mode:
             st.markdown("**🔍 デバッグ情報**")

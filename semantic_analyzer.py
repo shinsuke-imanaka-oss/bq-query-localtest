@@ -1,4 +1,4 @@
-# semantic_analyzer.py (最終診断版)
+# semantic_analyzer.py (最終解決版)
 import streamlit as st
 from typing import List, Dict, Optional
 import numpy as np
@@ -11,14 +11,21 @@ except ImportError:
     SETTINGS_AVAILABLE = False
     settings = None
 
+# --- ライブラリのインポート ---
+# TextEmbeddingModel に依存しない、より低レベルな部品をインポートします
 try:
     from google.cloud import aiplatform
+    from google.protobuf import json_format
+    from google.protobuf.struct_pb2 import Value
     AIPLATFORM_AVAILABLE = True
 except ImportError:
     AIPLATFORM_AVAILABLE = False
 
 @st.cache_data(show_spinner="AIがテキストをベクトル化しています...")
 def generate_embeddings(texts: List[str]) -> Optional[Dict[str, List[float]]]:
+    """
+    TextEmbeddingModel を使わずに、Vertex AI Endpointを直接呼び出してベクトルを生成する。
+    """
     if not AIPLATFORM_AVAILABLE:
         st.error("❌ `google-cloud-aiplatform`ライブラリが見つかりません。")
         return None
@@ -35,21 +42,29 @@ def generate_embeddings(texts: List[str]) -> Optional[Dict[str, List[float]]]:
         return None
 
     try:
-        print("[semantic_analyzer] TRYブロック: API呼び出しを開始します。")
-        aiplatform.init(project=project_id, location=location)
-        model = aiplatform.TextEmbeddingModel.from_pretrained("text-embedding-004")
-        instances = [{"content": text} for text in texts]
-        embeddings = model.get_embeddings(instances=instances)
+        # APIクライアントを初期化
+        client_options = {"api_endpoint": f"{location}-aiplatform.googleapis.com"}
+        client = aiplatform.gapic.PredictionServiceClient(client_options=client_options)
+
+        # エンドポイントのパスを構築
+        endpoint = f"projects/{project_id}/locations/{location}/publishers/google/models/text-embedding-004"
         
-        embedding_dict = { text: embedding.values for text, embedding in zip(texts, embeddings) }
-        print("[semantic_analyzer] TRYブロック: API呼び出し成功。")
+        # APIが要求する形式でインスタンスを作成
+        instances = [json_format.ParseDict({"content": text}, Value()) for text in texts]
+        
+        # APIにリクエストを送信
+        response = client.predict(endpoint=endpoint, instances=instances)
+        
+        # 結果を「テキスト: ベクトル」の辞書形式に整形
+        embedding_dict = {}
+        for i, prediction in enumerate(response.predictions):
+            vector = [v for v in prediction['embeddings']['values']]
+            embedding_dict[texts[i]] = vector
+            
         return embedding_dict
 
     except Exception as e:
-        print(f"[semantic_analyzer] EXCEPTブロック: エラーを捕捉しました。エラーをraiseします。")
-        print(f"[semantic_analyzer] 捕捉したエラーのタイプ: {type(e).__name__}")
-        print(f"[semantic_analyzer] 捕捉したエラーのメッセージ: {e}")
-        # ★★★★★ ここでエラーを呼び出し元に報告します ★★★★★
+        st.error(f"エンベディング生成中にエラーが発生しました: {e}")
         raise e
 
 def find_similar_texts(query_text: str, embeddings_dict: Dict[str, List[float]], top_n: int = 5) -> Optional[pd.DataFrame]:

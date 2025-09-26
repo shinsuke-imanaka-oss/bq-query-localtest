@@ -209,7 +209,7 @@ def show_analysis_recipe_selection():
         st.info(f"📝 **{selected_recipe}**: {recipe_description}")
         
         # レシピをテキストエリアに自動挿入
-        if st.button(f"📋 「{selected_recipe}」を使用", use_container_width=True):
+        if st.button(f"📋 「{selected_recipe}」を使用", width='stretch'):
             st.session_state.current_user_input = recipe_description
             st.rerun()
 
@@ -284,18 +284,18 @@ def show_main_input_interface():
         if st.button(
             "🚀 分析実行" if not st.session_state.get("analysis_in_progress", False) else "⏳ 分析中...",
             disabled=analysis_disabled,
-            use_container_width=True,
+            width='stretch',
             type="primary"
         ):
             execute_main_analysis(user_input)
     
     with col2:
-        if st.button("🧹 クリア", use_container_width=True):
+        if st.button("🧹 クリア", width='stretch'):
             st.session_state.current_user_input = ""
             st.rerun()
     
     with col3:
-        if st.button("📝 SQL手動入力", use_container_width=True):
+        if st.button("📝 SQL手動入力", width='stretch'):
             show_manual_sql_interface()
 
 # =========================================================================
@@ -325,11 +325,11 @@ LIMIT 10""",
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔍 手動SQL実行", disabled=not manual_sql.strip(), use_container_width=True):
+        if st.button("🔍 手動SQL実行", disabled=not manual_sql.strip(), width='stretch'):
             execute_manual_sql(manual_sql)
     
     with col2:
-        if st.button("🔙 戻る", use_container_width=True):
+        if st.button("🔙 戻る", width='stretch'):
             st.rerun()
 
 # =========================================================================
@@ -442,7 +442,7 @@ def execute_manual_sql(sql: str):
             
             # データの表示
             st.subheader("📊 実行結果")
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width='stretch')
             
             # 基本統計
             col1, col2, col3 = st.columns(3)
@@ -486,7 +486,7 @@ def show_analysis_results():
     st.subheader("📊 最新の分析結果")
     
     # データ表示
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
     
     # 基本統計情報
     col1, col2, col3, col4 = st.columns(4)
@@ -523,36 +523,36 @@ def show_export_options(df: pd.DataFrame):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("📊 CSV ダウンロード", use_container_width=True):
+        if st.button("📊 CSV ダウンロード", width='stretch'):
             csv_data = df.to_csv(index=False)
             st.download_button(
                 label="💾 CSVをダウンロード",
                 data=csv_data,
                 file_name=f"analysis_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                width='stretch'
             )
     
     with col2:
-        if st.button("📋 JSON ダウンロード", use_container_width=True):
+        if st.button("📋 JSON ダウンロード", width='stretch'):
             json_data = df.to_json(orient='records', ensure_ascii=False, indent=2)
             st.download_button(
                 label="💾 JSONをダウンロード",
                 data=json_data,
                 file_name=f"analysis_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
-                use_container_width=True
+                width='stretch'
             )
     
     with col3:
-        if st.button("📈 分析レポート", use_container_width=True):
+        if st.button("📈 分析レポート", width='stretch'):
             report = generate_analysis_report(df)
             st.download_button(
                 label="💾 レポートをダウンロード",
                 data=report,
                 file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                 mime="text/markdown",
-                use_container_width=True
+                width='stretch'
             )
 
 def generate_analysis_report(df: pd.DataFrame) -> str:
