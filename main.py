@@ -137,7 +137,7 @@ except ImportError as e:
 
 # 強化プロンプトシステム
 try:
-    from enhanced_prompts import generate_enhanced_sql_prompt, generate_enhanced_claude_prompt
+    from enhanced_prompts import generate_sql_plan_prompt, generate_enhanced_claude_prompt
     IMPORT_STATUS["enhanced_prompts"] = True
     print("✅ enhanced_prompts.py インポート成功")
 except ImportError as e:
@@ -550,6 +550,92 @@ def show_semantic_search_ui():
         else:
             st.error("基準となるキャンペーンを選択してください。")
 
+def show_auto_grouping_ui():
+    """セマンティック分析による自動グルーピングUI"""
+    st.markdown("---")
+    st.subheader("🧠 広告クリエイティブ自動グルーピング")
+    st.markdown("広告文やキャンペーン名を意味の近さで自動的にグループ分けし、主要な訴求パターンを発見します。")
+
+    bq_client = st.session_state.get("bq_client")
+    if not bq_client:
+        st.warning("BigQueryに接続してください。")
+        return
+
+    # --- データ取得 ---
+    @st.cache_data(ttl=3600)
+    def get_ad_creatives(_bq_client):
+        # 広告テーブルから Headline を取得する例
+        query = """
+        SELECT DISTINCT Headline 
+        FROM `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad` 
+        WHERE Headline IS NOT NULL AND LENGTH(Headline) > 5
+        LIMIT 500
+        """
+        try:
+            df = _bq_client.query(query).to_dataframe()
+            return df["Headline"].tolist()
+        except Exception as e:
+            st.error(f"広告クリエイティブの取得に失敗しました: {e}")
+            return []
+
+    ad_texts = get_ad_creatives(bq_client)
+    if not ad_texts:
+        st.info("分析対象の広告データがありません。")
+        return
+
+    # --- UI設定 ---
+    n_clusters = st.slider(
+        "分類するグループ数", 
+        min_value=2, 
+        max_value=15, 
+        value=5, 
+        help="広告文をいくつのグループに分けるか指定します。"
+    )
+
+    if st.button("🚀 グルーピング実行", type="primary"):
+        from semantic_analyzer import group_texts_by_meaning, summarize_cluster_themes, reduce_dimensions_for_visualization
+        
+        # グルーピング実行
+        grouped_df = group_texts_by_meaning(ad_texts, n_clusters)
+        
+        if grouped_df is not None:
+            # AIによるテーマ要約
+            gemini_model = st.session_state.get("gemini_model")
+            cluster_themes = summarize_cluster_themes(grouped_df, gemini_model)
+
+            # --- 結果表示 ---
+            st.subheader("📊 グルーピング結果")
+
+            # 可視化
+            from semantic_analyzer import generate_embeddings # generate_embeddings をインポート
+            import pandas as pd # pandas をインポート
+            import plotly.express as px # plotly をインポート
+
+            embeddings_dict = generate_embeddings(grouped_df['text'].tolist()) # 再利用
+            if embeddings_dict:
+                vis_df = reduce_dimensions_for_visualization(embeddings_dict)
+                if vis_df is not None:
+                    vis_df = pd.merge(vis_df, grouped_df, on='text')
+                    vis_df['cluster'] = vis_df['cluster'].astype(str) # 色分けのため文字列に
+                    
+                    fig = px.scatter(
+                        vis_df, 
+                        x='x', y='y', 
+                        color='cluster', 
+                        hover_name='text',
+                        title='広告クリエイティブの分布マップ',
+                        labels={'color': 'グループ'}
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+
+            # 各クラスタの詳細
+            for cluster_id in sorted(grouped_df['cluster'].unique()):
+                theme_name = cluster_themes.get(cluster_id, f"グループ {cluster_id + 1}")
+                with st.expander(f"**{theme_name}** ({len(grouped_df[grouped_df['cluster'] == cluster_id])}件)"):
+                    st.dataframe(grouped_df[grouped_df['cluster'] == cluster_id][['text']], use_container_width=True)
+
+
 def show_ai_mode():
     """AI分析モード"""
     if IMPORT_STATUS["ui_main"]:
@@ -565,7 +651,8 @@ def show_ai_mode():
 
         # セマンティック分析が有効な場合のみ、検索UIを表示
         if st.session_state.get("use_semantic_analysis", False):
-            show_semantic_search_ui()
+            show_semantic_search_ui() # 既存の類似検索UI
+            show_auto_grouping_ui()   # 新しく追加するグルーピングUI
     else:
         st.error("❌ AI分析機能が利用できません")
 

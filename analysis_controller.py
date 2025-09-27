@@ -9,110 +9,138 @@ import time
 from datetime import datetime
 from typing import Optional
 
+import json # <-- jsonライブラリのインポートも確認してください
+
+def build_sql_from_plan(plan: dict, table_name: str) -> str:
+    """【新】AIが生成した設計書(plan)から、安全なSQL文を組み立てる"""
+    
+    # SELECT句の組み立て
+    select_parts = []
+    if plan.get("select_columns"):
+        # 空の文字列やNoneを除外
+        select_parts.extend([col for col in plan["select_columns"] if col])
+    if plan.get("aggregations"):
+        for agg in plan["aggregations"]:
+            # expressionとaliasが存在することを確認
+            if agg.get("expression") and agg.get("alias"):
+                select_parts.append(f"{agg['expression']} AS {agg['alias']}")
+    
+    if not select_parts:
+        # AIがプランを正しく生成できなかった場合、基本的なクエリにフォールバック
+        select_clause = "SELECT *"
+    else:
+        select_clause = "SELECT\n  " + ",\n  ".join(select_parts)
+    
+    # FROM句
+    from_clause = f"FROM\n  `{table_name}`"
+    
+    # WHERE句
+    where_clause = ""
+    if plan.get("filters"):
+        conditions = []
+        for f in plan["filters"]:
+            # 必要なキーが存在することを確認
+            if f.get("column") and f.get("operator") and f.get("value") is not None:
+                conditions.append(f"{f['column']} {f['operator']} {f['value']}")
+        if conditions:
+            where_clause = "WHERE\n  " + "\n  AND ".join(conditions)
+        
+    # GROUP BY句
+    group_by_clause = ""
+    if plan.get("group_by"):
+        # 空の文字列やNoneを除外
+        group_by_cols = [col for col in plan["group_by"] if col]
+        if group_by_cols:
+            group_by_clause = "GROUP BY\n  " + ", ".join(group_by_cols)
+        
+    # ORDER BY句
+    order_by_clause = ""
+    if plan.get("order_by") and plan["order_by"].get("column"):
+        ob = plan["order_by"]
+        direction = ob.get("direction", "DESC") # directionがなければDESCをデフォルトに
+        order_by_clause = f"ORDER BY\n  {ob['column']} {direction}"
+        
+    # LIMIT句
+    limit_clause = ""
+    if plan.get("limit"):
+        limit_clause = f"LIMIT {int(plan['limit'])}"
+        
+    # 全ての句を結合（Noneや空文字列の句は除外）
+    final_sql = "\n".join(filter(None, [select_clause, from_clause, where_clause, group_by_clause, order_by_clause, limit_clause]))
+    return final_sql + ";"
+
+try:
+    from bq_tool_config import settings
+    SETTINGS_AVAILABLE = settings is not None
+except ImportError:
+    SETTINGS_AVAILABLE = False
+    settings = None
+
 def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic", selected_ai: str = "gemini", bq_client=None) -> bool:
-    """分析フローの実行 - 修正版"""
+    """【新】分析フローの実行（設計書ベースに全面改修）"""
     try:
         st.info("🔄 分析を開始しています...")
         
-        # BigQueryクライアントの取得（改善版）
         if bq_client is None:
             bq_client = st.session_state.get("bq_client")
-        
-        # デバッグ情報を表示
-        if st.session_state.get("debug_mode", False):
-            st.write(f"🔍 デバッグ: bq_client = {bq_client is not None}")
-            st.write(f"🔍 セッション状態のキー: {list(st.session_state.keys())}")
-        
-        #if not bq_client:
-        #    st.error("❌ BigQuery接続が見つかりません")
-        #    st.info("💡 解決方法:")
-        #    st.write("1. サイドバーで「🔄 BigQuery接続」をクリック")
-        #    st.write("2. 接続成功メッセージを確認")
-        #    st.write("3. 再度分析を実行")
-        #    
-        #    # 自動再接続を試行
-        #    st.info("🔄 自動再接続を試行中...")
-        #    from main import setup_bigquery_client
-        #    bq_client = setup_bigquery_client()
-        #    
-        #    if not bq_client:
-        #        return False
-        
+
         # プロンプトの準備
-        try:
-            if prompt_system == "enhanced":
-                from enhanced_prompts import generate_enhanced_sql_prompt
-                prompt = generate_enhanced_sql_prompt(user_input)
-                st.info("🚀 高品質プロンプトを使用")
-            else:
-                from prompts import get_optimized_bigquery_template
-                prompt = get_optimized_bigquery_template(user_input)
-                st.info("⚡ 基本プロンプトを使用")
-        except ImportError as e:
-            st.warning(f"⚠️ プロンプトシステムエラー: {e}")
-            # フォールバックプロンプト
-            prompt = f"""
-以下の要求に基づいて、BigQueryで実行可能なSQLクエリを生成してください：
+        if prompt_system == "enhanced":
+            # ▼▼▼【修正点】古い関数ではなく、新しい関数をインポートする ▼▼▼
+            from enhanced_prompts import generate_sql_plan_prompt
+            prompt = generate_sql_plan_prompt(user_input)
+            st.info("🚀 高品質プロンプト（設計書モード）を使用")
+        else:
+            from prompts import get_optimized_bigquery_template
+            prompt = get_optimized_bigquery_template(user_input)
+            st.info("⚡ 基本プロンプトを使用")
 
-{user_input}
+        # Gemini で処理
+        st.info("🤖 Gemini が分析プランを設計中...")
+        response = gemini_model.generate_content(prompt)
 
-テーブル: `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign`
-
-重要な列:
-- Date: 日付
-- CampaignName: キャンペーン名  
-- ServiceNameJA_Media: メディア名
-- Clicks: クリック数
-- Impressions: インプレッション数
-- CostIncludingFees: コスト（手数料込み）
-- Conversions: コンバージョン数
-
-SQLのみを出力してください。説明は不要です。
-"""
+        # 高品質モードの場合（設計書からSQLを組み立てる）
+        if prompt_system == "enhanced":
+            plan_json_str = response.text.strip()
+            if "```json" in plan_json_str:
+                plan_json_str = plan_json_str.split("```json")[1].split("```")[0]
+            
+            # ▼▼▼【修正点】jsonライブラリをインポートし、新しいbuild_sql_from_plan関数を呼び出す ▼▼▼
+            import json 
+            plan = json.loads(plan_json_str)
+            
+            with st.expander("📄 AIが生成した分析設計書 (JSON)"):
+                st.json(plan)
+            
+            correct_table_name = settings.bigquery.get_full_table_name("campaign")
+            final_sql = build_sql_from_plan(plan, correct_table_name)
         
-        # Gemini でSQL生成
-        if not gemini_model:
-            st.error("❌ Gemini接続が必要です。サイドバーで「🔄 Gemini接続」をクリックしてください。")
-            return False
-        
-        st.info("🤖 Gemini がSQLを生成中...")
-        
-        try:
-            response = gemini_model.generate_content(prompt)
+        # 基本モードの場合（従来通りSQLを直接生成）
+        else:
             sql = response.text.strip()
-        except Exception as e:
-            st.error(f"❌ Gemini API エラー: {str(e)}")
-            return False
-        
-        # SQLクリーンアップ
-        if "```sql" in sql:
-            sql = sql.split("```sql")[1].split("```")[0].strip()
-        elif "```" in sql:
-            sql = sql.split("```")[1].strip()
-        
-        if not sql:
+            if "```sql" in sql:
+                sql = sql.split("```sql")[1].split("```")[0].strip()
+            final_sql = sql
+
+        if not final_sql.strip():
             st.error("❌ SQLが生成されませんでした")
             return False
         
-        # 生成されたSQLを表示
-        with st.expander("📄 生成されたSQL", expanded=False):
-            st.code(sql, language="sql")
+        with st.expander("📄 実行されるSQL (最終版)", expanded=False):
+            st.code(final_sql, language="sql")
         
-        st.session_state.last_sql = sql
+        st.session_state.last_sql = final_sql
         st.session_state.last_user_input = user_input
         
         # SQL実行
         st.info("📊 BigQuery でSQL実行中...")
-        df = execute_sql_query(bq_client, sql)
+        df = execute_sql_query(bq_client, final_sql)
         
         if df is not None and not df.empty:
             st.session_state.last_analysis_result = df
             st.success(f"✅ 分析完了！ {len(df)}行のデータを取得しました。")
-            
-            # データを表示
             st.dataframe(df, use_container_width=True)
             
-            # Claude分析（選択されている場合）
             if selected_ai in ["claude", "both"] and st.session_state.get("claude_client"):
                 st.info("🧠 Claude が分析中...")
                 try:
@@ -123,29 +151,21 @@ SQLのみを出力してください。説明は不要です。
                 except Exception as e:
                     st.warning(f"⚠️ Claude分析エラー: {str(e)}")
             
-            # 使用統計更新
             update_usage_stats(user_input, True, prompt_system)
             return True
         else:
             st.warning("⚠️ データが取得できませんでした")
             st.info("💡 以下を確認してください：")
             st.write("- 日付範囲が適切か")
-            st.write("- テーブル名が正しいか") 
+            st.write("- テーブル名が正しいか")
             st.write("- データが存在する期間か")
+            update_usage_stats(user_input, False, prompt_system)
             return False
             
     except Exception as e:
-        raise e
-        
-        # エラーハンドリング
-        try:
-            from error_handler import handle_error_with_ai
-            suggestion = handle_error_with_ai(str(e))
-            st.markdown("### 💡 解決策の提案")
-            st.info(suggestion)
-        except ImportError:
-            st.info("💡 SQLの構文やテーブル名を確認してください")
-        
+        st.error(f"分析フローで予期せぬエラーが発生しました: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         update_usage_stats(user_input, False, prompt_system)
         return False
 

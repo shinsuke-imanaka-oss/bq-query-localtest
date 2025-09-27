@@ -73,8 +73,9 @@ def safe_import_prompts():
 def safe_import_enhanced_prompts():
     """強化プロンプトシステムの安全なインポート"""
     try:
-        from enhanced_prompts import generate_enhanced_sql_prompt, generate_enhanced_claude_prompt
-        return generate_enhanced_sql_prompt, generate_enhanced_claude_prompt
+        # ▼▼▼ 新しい関数名をインポートするように修正 ▼▼▼
+        from enhanced_prompts import generate_sql_plan_prompt, generate_enhanced_claude_prompt
+        return generate_sql_plan_prompt, generate_enhanced_claude_prompt
     except ImportError:
         def fallback_enhanced_sql(user_input: str):
             return f"以下の分析を実行してください: {user_input}"
@@ -86,7 +87,7 @@ def safe_import_enhanced_prompts():
 ui_features = safe_import_ui_features()
 run_analysis_flow = safe_import_analysis_controller()
 select_best_prompt, PROMPT_DEFINITIONS = safe_import_prompts()
-generate_enhanced_sql_prompt, generate_enhanced_claude_prompt = safe_import_enhanced_prompts()
+generate_sql_plan_prompt, generate_enhanced_claude_prompt = safe_import_enhanced_prompts()
 
 # =========================================================================
 # 分析レシピの定義

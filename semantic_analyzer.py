@@ -86,3 +86,110 @@ def find_similar_texts(query_text: str, embeddings_dict: Dict[str, List[float]],
     except Exception as e:
         st.error(f"類似性計算中にエラーが発生しました: {e}")
         return None
+
+# semantic_analyzer.py に以下を追加
+
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+import plotly.express as px
+
+# (generate_embeddings, find_similar_texts は既存のまま)
+# ...
+
+def group_texts_by_meaning(texts: List[str], n_clusters: int = 5) -> Optional[pd.DataFrame]:
+    """
+    テキストリストを意味に基づいてクラスタリングする。
+
+    Args:
+        texts (List[str]): クラスタリング対象のテキストリスト。
+        n_clusters (int): 作成するグループの数。
+
+    Returns:
+        Optional[pd.DataFrame]: テキストとクラスタ番号を含むDataFrame。
+    """
+    st.info(f"⚙️ {len(texts)}件のテキストからベクトルを生成しています...")
+    embeddings_dict = generate_embeddings(texts)
+    if not embeddings_dict:
+        st.error("ベクトルの生成に失敗しました。")
+        return None
+    
+    df = pd.DataFrame(embeddings_dict.items(), columns=['text', 'vector'])
+    
+    st.info(f"⚙️ ベクトルデータを{n_clusters}個のグループに分類しています...")
+    vectors = np.array(df['vector'].tolist())
+    
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    df['cluster'] = kmeans.fit_predict(vectors)
+    
+    st.success("✅ グルーピングが完了しました。")
+    return df[['text', 'cluster']]
+
+def summarize_cluster_themes(grouped_df: pd.DataFrame, model) -> Dict[int, str]:
+    """
+    【追加提案】各クラスタのテーマをAIに要約させる。
+
+    Args:
+        grouped_df (pd.DataFrame): クラスタリング結果のDataFrame。
+        model: Geminiモデルのインスタンス。
+
+    Returns:
+        Dict[int, str]: クラスタ番号をキー、要約を値とする辞書。
+    """
+    if not model:
+        st.warning("⚠️ AIモデルが利用できないため、テーマの要約はスキップします。")
+        return {}
+
+    st.info("🤖 AIが各グループのテーマを分析・要約しています...")
+    themes = {}
+    for cluster_id in sorted(grouped_df['cluster'].unique()):
+        # 各クラスタから最大10件のサンプルを取得
+        sample_texts = grouped_df[grouped_df['cluster'] == cluster_id]['text'].sample(min(10, len(grouped_df[grouped_df['cluster'] == cluster_id]))).tolist()
+        
+        # ▼▼▼【重要】この行で変数 texts_for_prompt を定義しています ▼▼▼
+        texts_for_prompt = "\n- ".join(sample_texts)
+        
+        prompt = f"""
+        以下の広告文リストは、AIによって意味的に近いと判断されたグループです。
+        このグループの共通テーマや訴求の切り口を分析し、グループにふさわしい「キャッチーな名前」を1つだけ提案してください。
+
+        広告文リスト:
+        - {texts_for_prompt}
+
+        出力形式:
+        キャッチーな名前
+        """
+        
+        try:
+            response = model.generate_content(prompt)
+            themes[cluster_id] = response.text.strip().replace("*", "")
+        except Exception as e:
+            themes[cluster_id] = f"要約エラー: {e}"
+            
+    return themes
+
+def reduce_dimensions_for_visualization(embeddings_dict: Dict[str, List[float]]) -> Optional[pd.DataFrame]:
+    """
+    【追加提案】可視化のためにベクトルをt-SNEで2次元に削減する。
+
+    Args:
+        embeddings_dict (Dict[str, List[float]]): テキストとベクトルの辞書。
+
+    Returns:
+        Optional[pd.DataFrame]: テキストと2次元座標を含むDataFrame。
+    """
+    if not embeddings_dict:
+        return None
+        
+    texts = list(embeddings_dict.keys())
+    vectors = np.array(list(embeddings_dict.values()))
+    
+    st.info("🎨 グラフ表示のために次元削減を実行中...")
+    tsne = TSNE(n_components=2, random_state=42, perplexity=min(5, len(texts)-1))
+    reduced_vectors = tsne.fit_transform(vectors)
+    
+    vis_df = pd.DataFrame(reduced_vectors, columns=['x', 'y'])
+    vis_df['text'] = texts
+    
+    return vis_df

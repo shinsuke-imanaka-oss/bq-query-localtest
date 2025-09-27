@@ -23,10 +23,8 @@ except ImportError:
 # 強化されたプロンプトシステム 
 try:
     from enhanced_prompts import (
-        generate_enhanced_sql_prompt, 
+        generate_sql_plan_prompt, 
         generate_enhanced_claude_prompt,
-        ENHANCED_MODIFY_SQL_TEMPLATE,
-        PromptContextEnhancer
     )
 except ImportError:
     st.warning("enhanced_prompts.py が見つかりません - 基本プロンプトのみ使用")
@@ -319,7 +317,7 @@ def run_analysis_flow(gemini_model, claude_client, claude_model_name: str, selec
             # SQL生成
             if use_enhanced:
                 try:
-                    sql_prompt = generate_enhanced_sql_prompt(user_input)
+                    sql_prompt = generate_sql_plan_prompt(user_input)
                 except (NameError, TypeError):
                     st.warning("強化プロンプトが利用できません。基本プロンプトを使用します。")
                     sql_prompt = create_basic_sql_prompt(user_input)

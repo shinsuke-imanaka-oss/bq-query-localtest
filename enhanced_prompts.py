@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import streamlit as st
+from context_glossary import get_glossary_for_prompt
 
 # 設定管理システムの読み込み
 try:
@@ -16,6 +17,33 @@ try:
 except ImportError:
     SETTINGS_AVAILABLE = False
     settings = None
+
+@st.cache_data(ttl=3600)
+def get_table_schema_for_prompt(table_name: str) -> str:
+    """指定されたテーブルのスキーマ（列名とデータ型）を取得し、プロンプト用に整形する"""
+    bq_client = st.session_state.get("bq_client")
+    if not bq_client or not table_name:
+        return "（スキーマ情報を取得できませんでした）"
+    
+    try:
+        # テーブル名をプロジェクトID, データセットID, テーブルIDに分割
+        project_id, dataset_id, table_id = table_name.split('.')
+        
+        # INFORMATION_SCHEMAをクエリして列情報を取得
+        query = f"""
+        SELECT column_name, data_type
+        FROM `{project_id}.{dataset_id}.INFORMATION_SCHEMA.COLUMNS`
+        WHERE table_name = '{table_id}'
+        ORDER BY ordinal_position
+        """
+        df = bq_client.query(query).to_dataframe()
+        
+        # プロンプトに埋め込むための文字列を作成
+        schema_str = "\n".join([f"- {row.column_name} ({row.data_type})" for index, row in df.iterrows()])
+        return schema_str
+    except Exception as e:
+        st.warning(f"テーブルスキーマの取得に失敗: {e}")
+        return "（スキーマ情報を取得できませんでした）"
 
 # =========================================================================
 # 業界ベンチマーク・定数定義（設定対応版）
@@ -94,86 +122,96 @@ class EnhancedPrompts:
     def _get_default_templates(self) -> Dict[str, str]:
         """デフォルトプロンプトテンプレート"""
         return {
-            "sql_generation": """
-# BigQuery SQL 生成指示
-
-## 目標
-{user_input}に基づいて、BigQueryで実行可能な高精度SQLクエリを生成してください。
-
-## データベース情報
-- **プロジェクトID**: {project_id}
-- **データセット**: {dataset}
-- **メインテーブル**: {table_name}
-
-## 技術要件
-- BigQuery標準SQL構文を使用
-- パフォーマンス最適化を考慮
-- エラー処理とNULL値対応
-- 適切なデータ型キャスト
-
-## 出力形式
-```sql
--- 生成されたSQLクエリ
-```
-
-{context}
-""",
+            "sql_planning": """
             
+            # BigQuery SQLクエリ設計書 作成指示
+
+            ## あなたの役割
+            あなたは、ユーザーの自然言語による要求を分析し、それを実行するためのSQLクエリの構成要素を**JSON形式で出力する**「SQLプランナー」です。
+            **重要: あなたはSQLを直接書いてはいけません。**SQLを組み立てるための「設計書」となるJSONを作ることが、あなたの唯一の仕事です。
+
+            ## ユーザー要求
+            {user_input}
+
+            ## 利用可能なテーブルスキーマ
+            {table_schema}
+
+            ## ビジネス用語集
+            {context}
+
+            ## JSON設計書の出力形式とルール
+            - `select_columns`: 集計しない列（GROUP BY句で使う列）をリストで記述。
+            - `aggregations`: SUM, AVG, SAFE_DIVIDEなど集計関数を使った計算式を記述。`alias`には必ず分かりやすい別名を付ける。
+            - `filters`: WHERE句の条件を記述。`value`にはSQLで使える形式の文字列（例: `'2025-03-01'`）を入れる。
+            - `group_by`: `select_columns`と同じ内容を記述。
+            - `order_by`: `column`には`alias`で付けた名前を使い、`direction`は`DESC`または`ASC`。
+            - `limit`: 結果の行数。不要な場合は省略可。
+            - **スキーマにない列は絶対に使用しないでください。**
+            - **計算不可能な指標（例: F2転換率）を要求された場合は、その指標に対応する`aggregations`の要素を完全に省略してください。**
+            - **必ずJSON形式のコードブロック（```json ... ```）のみを出力してください。解説は一切不要です。**
+
+            ## JSON設計書の例
+            ```json
+            {{
+            "select_columns": ["CampaignName"],
+            "aggregations": [
+                {{"alias": "TotalCost", "expression": "SUM(CostIncludingFees)"}},
+                {{"alias": "ROAS", "expression": "SAFE_DIVIDE(SUM(ConversionValue), SUM(CostIncludingFees))"}}
+            ],
+            "filters": [
+                {{"column": "Date", "operator": "BETWEEN", "value": "'2025-03-01' AND '2025-04-30'"}}
+            ],
+            "group_by": ["CampaignName"],
+            "order_by": {{"column": "ROAS", "direction": "DESC"}},
+            "limit": 10
+            }}
+            """,
+                        
             "claude_analysis": """
-# マーケティング分析専門家として回答してください
+            # マーケティング分析専門家として回答してください
 
-## 分析対象データ
-{data_summary}
+            ## 分析対象データ
+            {data_summary}
 
-## 分析要求
-{user_input}
+            ## 分析要求
+            {user_input}
 
-## 業界ベンチマーク
-{industry_benchmarks}
+            ## 業界ベンチマーク
+            {industry_benchmarks}
 
-## 出力要求
-1. **📊 データサマリー**: 重要な数値とトレンド
-2. **🔍 インサイト**: 発見されたパターンと特徴
-3. **💡 戦略提案**: 具体的なアクションプラン
-4. **📈 改善施策**: 優先度順の推奨事項
+            ## 出力要求
+            1. **📊 データサマリー**: 重要な数値とトレンド
+            2. **🔍 インサイト**: 発見されたパターンと特徴
+            3. **💡 戦略提案**: 具体的なアクションプラン
+            4. **📈 改善施策**: 優先度順の推奨事項
 
-{context}
-"""
+            {context}
+            """
         }
     
-    def generate_enhanced_sql_prompt(self, user_input: str, context: Dict[str, Any] = None) -> str:
-        """強化SQL生成プロンプト（設定対応版）"""
+    def generate_sql_plan_prompt(self, user_input: str, context: Dict[str, Any] = None) -> str:
+        """【新】SQLの「設計書」をAIに生成させるためのプロンプトを生成する"""
         if context is None:
             context = {}
         
         # BigQuery設定の取得
         if SETTINGS_AVAILABLE:
-            project_id = settings.bigquery.project_id
-            dataset = settings.bigquery.dataset
-            table_prefix = settings.bigquery.table_prefix
+            full_table_name = settings.bigquery.get_full_table_name("campaign")
+            table_schema = get_table_schema_for_prompt(full_table_name)
         else:
-            # フォールバック値
-            project_id = context.get("project_id", "your-project")
-            dataset = context.get("dataset", "marketing_data")
-            table_prefix = context.get("table_prefix", "campaign_")
-        
+            table_schema = "（スキーマ情報なし）"
+
         # コンテキスト情報の構築
         sql_context = self._build_sql_context(user_input, context)
         
         # プロンプトテンプレートの適用
-        enhanced_prompt = self.prompt_templates["sql_generation"].format(
+        plan_prompt = self.prompt_templates["sql_planning"].format(
             user_input=user_input,
-            project_id=project_id,
-            dataset=dataset,
-            table_name=f"{table_prefix}data",
+            table_schema=table_schema,
             context=sql_context
         )
         
-        # モデル固有の調整
-        if self.config["gemini_model"] == "gemini-1.5-pro":
-            enhanced_prompt += "\n\n## 特別指示\n- 複雑な分析にはサブクエリとCTEを効果的に活用\n- パフォーマンス最適化のためのベストプラクティスを適用"
-        
-        return enhanced_prompt
+        return plan_prompt
     
     def generate_enhanced_claude_prompt(self, user_input: str, data_summary: str, context: Dict[str, Any] = None) -> str:
         """強化Claude分析プロンプト（設定対応版）"""
@@ -222,7 +260,11 @@ class EnhancedPrompts:
     def _build_sql_context(self, user_input: str, context: Dict[str, Any]) -> str:
         """SQL生成用のコンテキスト情報構築"""
         context_parts = []
-        
+
+        # 用語集を追加
+        glossary = get_glossary_for_prompt()
+        context_parts.append(glossary)
+
         # 過去の分析パターンから学習
         if self.analysis_history:
             recent_patterns = self._analyze_recent_patterns()
@@ -248,7 +290,11 @@ class EnhancedPrompts:
     def _build_claude_context(self, context: Dict[str, Any]) -> str:
         """Claude分析用のコンテキスト情報構築"""
         context_parts = []
-        
+
+        # 用語集を追加
+        glossary = get_glossary_for_prompt()
+        context_parts.append(glossary)
+
         # 分析の背景・目的
         if context.get("analysis_goal"):
             context_parts.append(f"### 🎯 分析目的\n{context['analysis_goal']}")
@@ -406,20 +452,13 @@ except Exception as e:
     print(f"⚠️ 強化プロンプトシステム初期化エラー: {e}")
     enhanced_prompts = None
 
-def generate_enhanced_sql_prompt(user_input: str, context: Dict[str, Any] = None) -> str:
-    """強化SQL生成プロンプト（エントリーポイント）"""
+def generate_sql_plan_prompt(user_input: str, context: Dict[str, Any] = None) -> str:
+    """【新】強化SQL「設計書」生成プロンプト（エントリーポイント）"""
     if enhanced_prompts:
-        return enhanced_prompts.generate_enhanced_sql_prompt(user_input, context)
+        return enhanced_prompts.generate_sql_plan_prompt(user_input, context)
     else:
         # フォールバック処理
-        basic_template = """
-以下の要求に基づいてBigQuery SQLクエリを生成してください:
-
-{user_input}
-
-BigQuery標準SQL構文を使用し、エラー処理を含めてください。
-        """.strip()
-        return basic_template.format(user_input=user_input)
+        return json.dumps({"error": "Enhanced prompts not available."})
 
 def generate_enhanced_claude_prompt(user_input: str, data_summary: str, context: Dict[str, Any] = None) -> str:
     """強化Claude分析プロンプト（エントリーポイント）"""
@@ -435,17 +474,12 @@ def generate_enhanced_claude_prompt(user_input: str, data_summary: str, context:
 
 ## 分析要求
 {user_input}
-
-以下の形式で回答してください:
-1. データサマリー
-2. 主要な洞察
-3. 改善提案
-4. アクションプラン
-        """.strip()
+"""
         return basic_template.format(user_input=user_input, data_summary=data_summary)
 
 def select_enhanced_prompt(user_input: str, context: Dict[str, Any] = None) -> Dict[str, str]:
     """ユーザー入力から最適な強化プロンプトを選択"""
+    # ... (この関数の中身は変更なし) ...
     user_lower = user_input.lower()
     context = context or {}
     
