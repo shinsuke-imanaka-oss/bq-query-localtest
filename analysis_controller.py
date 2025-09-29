@@ -28,7 +28,7 @@ def build_sql_from_plan(plan: dict) -> str:
         table_name = "LookerStudio_report_campaign"
 
     # BigQueryクライアントがプロジェクトとデータセットを補完することを前提とする
-    from_clause = f"FROM\n  `{settings.bigquery.dataset}.{table_name}`"
+    from_clause = f"FROM\n  `{settings.bigquery.full_dataset_id}.{table_name}`"
 
     # SELECT句とGROUP BY句を同時に組み立てる
     dimensions = plan.get("dimensions", [])

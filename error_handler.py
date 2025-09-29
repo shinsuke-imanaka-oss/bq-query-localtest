@@ -1,107 +1,87 @@
-# error_handler.py (ハイブリッド版)
+# error_handler.py を以下の内容で完全に置き換えてください
+
 import streamlit as st
 import traceback
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import re
 
-def _handle_error_statically(error_message: str) -> str:
-    """
-    (応用) キーワードベースのシンプルなエラー分析（AIが利用できない場合のフォールバック）
-    """
-    error_lower = error_message.lower()
-    
-    if "not found" in error_lower or "does not exist" in error_lower:
-        suggestion = """
-        **原因の可能性:** テーブル名または列名が存在しない可能性があります。
-        **解決策:**
-        - `config.py`で設定したテーブル名や列名のスペルが正しいか確認してください。
-        - BigQuery上でテーブルが実際に存在するか確認してください。
-        """
-    elif "syntax" in error_lower:
-        suggestion = """
-        **原因の可能性:** SQLの構文に誤りがあります。
-        **解決策:**
-        - カンマ、括弧、引用符（`'` or `"`）の対応が取れているか確認してください。
-        - AIが生成したSQLの場合は、プロンプトを少し変更して再試行してみてください。
-        """
-    elif "permission" in error_lower or "access" in error_lower:
-        suggestion = """
-        **原因の可能性:** BigQueryへのアクセス権限が不足しています。
-        **解決策:**
-        - GCPのサービスアカウントに「BigQuery ユーザー」のIAMロールが付与されているか確認してください。
-        """
-    else:
-        suggestion = """
-        **原因の可能性:** 一般的なエラーが発生しました。
-        **解決策:**
-        - 「システム診断」パネルでAPI接続などを確認してください。
-        - 入力内容や選択したオプションを見直して、再度実行してみてください。
-        """
-    return suggestion
-
-def _record_error(e: Exception, suggestion: str, context: Dict[str, Any]):
-    """
-    (応用) エラーと提案内容をセッション履歴に記録する
-    """
+def _record_error(e: Exception, context: Dict[str, Any]):
+    """エラーをセッション履歴に記録する"""
     if "error_history" not in st.session_state:
         st.session_state.error_history = []
+
+    simplified_context = {k: v for k, v in context.items() if not hasattr(v, 'to_dataframe')}
     
     st.session_state.error_history.append({
         "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         "error_type": type(e).__name__,
         "error_message": str(e),
-        "suggestion": suggestion,
-        "context": context
+        "context": simplified_context
     })
-    
-    # 履歴の上限管理
     if len(st.session_state.error_history) > 10:
         st.session_state.error_history = st.session_state.error_history[-10:]
 
-def handle_error_with_ai(e: Exception, model, context: Dict[str, Any]):
-    """
-    エラーをAIで分析し、失敗した場合は静的分析にフォールバックする
-    """
-    st.error(f"エラーが発生しました: {str(e)}")
+def _suggest_sql_fix(e: Exception, model, context: Dict[str, Any]) -> Optional[str]:
+    """AIにSQLの自動修正を試みさせる"""
+    error_message = str(e).lower()
+    original_sql = context.get("generated_sql") or context.get("sql")
 
-    suggestion = ""
-    
-    # AIモデルが利用可能なら、AIによる分析を試みる
-    if model:
-        with st.spinner("🤖 AIがエラー原因を分析し、解決策を検討しています..."):
-            try:
-                error_details = f"""
-                ## エラー情報
-                - **種類:** {type(e).__name__}
-                - **メッセージ:** {str(e)}
-                - **コンテキスト:** {context}
-                - **トレースバック:**
-                {traceback.format_exc()}
-                """
+    if original_sql and ("syntax" in error_message or "not found" in error_message or "unrecognized name" in error_message):
+        try:
+            with st.spinner("🤖 AIがSQLの自動修正を試みています..."):
                 prompt = f"""
-                あなたはデータ分析アプリのデバッグアシスタントです。以下のエラー情報を分析し、原因・具体的な修正案・再発防止策を初心者にも分かりやすくマークダウンで回答してください。
-                ---
-                {error_details}
+                以下のBigQuery SQLはエラーになりました。エラーメッセージを参考にSQLを修正してください。
+                修正後のSQLコードブロックのみを返してください。説明は不要です。
+
+                # エラーメッセージ: {str(e)}
+                # 修正対象のSQL:
+                ```sql
+                {original_sql}
+                ```
                 """
                 response = model.generate_content(prompt)
-                suggestion = response.text
-                
-                st.subheader("🤖 AIによるエラー分析と解決策")
-                st.markdown(suggestion)
+                response_text = response.text.strip()
+                match = re.search(r"```(?:sql)?\n(.*?)\n```", response_text, re.DOTALL)
+                if match:
+                    return match.group(1).strip()
+                elif response_text.upper().lstrip().startswith("SELECT"):
+                    return response_text
+        except Exception as ai_e:
+            st.warning(f"AIによるSQL修正中にエラーが発生: {ai_e}")
+    return None
 
-            except Exception as ai_e:
-                st.error(f"🤖 AIによるエラー分析中に、別のエラーが発生しました: {ai_e}")
-                st.info("基本的なエラー分析に切り替えます。")
-                # AI分析が失敗したら、静的分析にフォールバック
-                suggestion = _handle_error_statically(str(e))
-                st.subheader("💡 トラブルシューティングのヒント")
-                st.markdown(suggestion)
-    else:
-        # AIモデルがない場合は、最初から静的分析を行う
-        st.info("基本的なエラー分析を行います。")
-        suggestion = _handle_error_statically(str(e))
-        st.subheader("💡 トラブルシューティングのヒント")
-        st.markdown(suggestion)
+def handle_error_with_ai(e: Exception, model, context: Dict[str, Any]):
+    """
+    ✨最終確定版✨
+    エラーを表示し、修正案があればレビュー用の情報をセッション状態に格納する
+    """
+    # ✨修正点✨: 必ず最初にエラー内容を表示する
+    st.error(f"分析中にエラーが発生しました: {type(e).__name__}")
+    with st.expander("エラー詳細"):
+        st.code(str(e))
     
-    # 最終的な提案内容をエラー履歴に記録
-    _record_error(e, suggestion, context)
+    _record_error(e, context)
+    
+    if model:
+        fixed_sql = _suggest_sql_fix(e, model, context)
+        if fixed_sql:
+            # 修正案が見つかった場合、レビュー画面表示のフラグを立てる
+            st.session_state.show_fix_review = True
+            st.session_state.original_erroneous_sql = context.get("sql") or context.get("generated_sql")
+            st.session_state.sql_fix_suggestion = fixed_sql
+        else:
+            # 修正案が見つからなかった場合、AIに原因を解説させる
+            with st.spinner("🤖 AIがエラー原因を分析しています..."):
+                try:
+                    prompt = f"""
+                    あなたはデータ分析アプリのデバッグアシスタントです。以下のエラー情報を分析し、原因と解決策を初心者にも分かりやすく解説してください。
+                    # エラー情報:
+                    - 種類: {type(e).__name__}
+                    - メッセージ: {str(e)}
+                    """
+                    response = model.generate_content(prompt)
+                    st.subheader("🤖 AIによるエラー解説")
+                    st.warning(response.text)
+                except Exception:
+                    pass

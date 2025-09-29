@@ -23,7 +23,12 @@ class BigQuerySettings:
     table_prefix: str = ""
     timeout: int = 300
     location: str = "asia-northeast1"
-    
+
+    @property
+    def full_dataset_id(self) -> str:
+        """プロジェクトIDとデータセットIDを結合した完全なIDを返す"""
+        return f"{self.project_id}.{self.dataset}"
+
     def get_full_table_name(self, table_name: str) -> str:
         """完全なテーブル名を取得"""
         prefix = f"{self.table_prefix}_" if self.table_prefix else ""
