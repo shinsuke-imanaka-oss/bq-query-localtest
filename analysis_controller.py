@@ -8,66 +8,7 @@ import pandas as pd
 import time
 from datetime import datetime
 from typing import Optional
-
-import json # <-- jsonライブラリのインポートも確認してください
-
-def build_sql_from_plan(plan: dict, table_name: str) -> str:
-    """【新】AIが生成した設計書(plan)から、安全なSQL文を組み立てる"""
-    
-    # SELECT句の組み立て
-    select_parts = []
-    if plan.get("select_columns"):
-        # 空の文字列やNoneを除外
-        select_parts.extend([col for col in plan["select_columns"] if col])
-    if plan.get("aggregations"):
-        for agg in plan["aggregations"]:
-            # expressionとaliasが存在することを確認
-            if agg.get("expression") and agg.get("alias"):
-                select_parts.append(f"{agg['expression']} AS {agg['alias']}")
-    
-    if not select_parts:
-        # AIがプランを正しく生成できなかった場合、基本的なクエリにフォールバック
-        select_clause = "SELECT *"
-    else:
-        select_clause = "SELECT\n  " + ",\n  ".join(select_parts)
-    
-    # FROM句
-    from_clause = f"FROM\n  `{table_name}`"
-    
-    # WHERE句
-    where_clause = ""
-    if plan.get("filters"):
-        conditions = []
-        for f in plan["filters"]:
-            # 必要なキーが存在することを確認
-            if f.get("column") and f.get("operator") and f.get("value") is not None:
-                conditions.append(f"{f['column']} {f['operator']} {f['value']}")
-        if conditions:
-            where_clause = "WHERE\n  " + "\n  AND ".join(conditions)
-        
-    # GROUP BY句
-    group_by_clause = ""
-    if plan.get("group_by"):
-        # 空の文字列やNoneを除外
-        group_by_cols = [col for col in plan["group_by"] if col]
-        if group_by_cols:
-            group_by_clause = "GROUP BY\n  " + ", ".join(group_by_cols)
-        
-    # ORDER BY句
-    order_by_clause = ""
-    if plan.get("order_by") and plan["order_by"].get("column"):
-        ob = plan["order_by"]
-        direction = ob.get("direction", "DESC") # directionがなければDESCをデフォルトに
-        order_by_clause = f"ORDER BY\n  {ob['column']} {direction}"
-        
-    # LIMIT句
-    limit_clause = ""
-    if plan.get("limit"):
-        limit_clause = f"LIMIT {int(plan['limit'])}"
-        
-    # 全ての句を結合（Noneや空文字列の句は除外）
-    final_sql = "\n".join(filter(None, [select_clause, from_clause, where_clause, group_by_clause, order_by_clause, limit_clause]))
-    return final_sql + ";"
+import json
 
 try:
     from bq_tool_config import settings
@@ -75,6 +16,83 @@ try:
 except ImportError:
     SETTINGS_AVAILABLE = False
     settings = None
+
+def build_sql_from_plan(plan: dict) -> str:
+    """【新・改4】AIが生成したシンプルな設計書(plan)から、安全なSQL文を組み立てる"""
+    
+    # AIが選択したテーブル名を取得
+    table_name = plan.get("table_to_use")
+    if not table_name or not isinstance(table_name, str):
+        st.warning("AIが使用するテーブルを特定できませんでした。デフォルトのキャンペーンテーブルを使用します。")
+        # デフォルトのテーブル名をフルで指定
+        table_name = "LookerStudio_report_campaign"
+
+    # BigQueryクライアントがプロジェクトとデータセットを補完することを前提とする
+    from_clause = f"FROM\n  `{settings.bigquery.dataset}.{table_name}`"
+
+    # SELECT句とGROUP BY句を同時に組み立てる
+    dimensions = plan.get("dimensions", [])
+    metrics = plan.get("metrics", [])
+    
+    select_parts = []
+    group_by_cols = []
+
+    # dimensions（分析軸）の処理
+    for col in dimensions:
+        if isinstance(col, str) and col:
+            select_parts.append(f"`{col}`")
+            group_by_cols.append(f"`{col}`")
+        else:
+            st.warning(f"⚠️ SQL設計書の'dimensions'に不正な値が含まれているため無視します: {col}")
+
+    # metrics（指標）の処理
+    for metric in metrics:
+        if isinstance(metric, dict) and metric.get("expression") and metric.get("alias"):
+            select_parts.append(f"{metric['expression']} AS `{metric['alias']}`")
+        else:
+            st.warning(f"⚠️ SQL設計書の'metrics'に不正な値が含まれているため無視します: {metric}")
+            
+    select_clause = "SELECT\n  " + (",\n  ".join(select_parts) if select_parts else "*")
+    group_by_clause = "GROUP BY\n  " + ", ".join(group_by_cols) if group_by_cols else ""
+
+    # WHERE句
+    where_clause = ""
+    if plan.get("filters"):
+        conditions = []
+        for f in plan.get("filters", []):
+            if isinstance(f, dict) and all(k in f for k in ["column", "operator", "value"]):
+                column = f['column']
+                operator = f['operator']
+                value = f['value']
+
+                # valueが文字列型ならシングルクォートで囲み、数値ならそのまま使う
+                if isinstance(value, str):
+                    # 簡単なSQLインジェクション対策として、値の中のシングルクォートをエスケープ
+                    escaped_value = value.replace("'", "''")
+                    value_str = f"'{escaped_value}'"
+                else:
+                    value_str = str(value)
+
+                conditions.append(f"`{column}` {operator} {value_str}")
+                
+        if conditions:
+            where_clause = "WHERE\n  " + "\n  AND ".join(conditions)
+        
+    # ORDER BY句
+    order_by_clause = ""
+    if plan.get("order_by") and isinstance(plan.get("order_by"), dict) and plan["order_by"].get("column"):
+        ob = plan["order_by"]
+        direction = ob.get("direction", "DESC")
+        # ORDER BY句ではエイリアスを使うため、バッククォートで囲むのが安全
+        order_by_clause = f"ORDER BY\n  `{ob['column']}` {direction}"
+        
+    # LIMIT句
+    limit_clause = ""
+    if plan.get("limit"):
+        limit_clause = f"LIMIT {int(plan['limit'])}"
+        
+    final_sql = "\n".join(filter(None, [select_clause, from_clause, where_clause, group_by_clause, order_by_clause, limit_clause]))
+    return final_sql + ";"
 
 def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic", selected_ai: str = "gemini", bq_client=None) -> bool:
     """【新】分析フローの実行（設計書ベースに全面改修）"""
@@ -86,7 +104,6 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
 
         # プロンプトの準備
         if prompt_system == "enhanced":
-            # ▼▼▼【修正点】古い関数ではなく、新しい関数をインポートする ▼▼▼
             from enhanced_prompts import generate_sql_plan_prompt
             prompt = generate_sql_plan_prompt(user_input)
             st.info("🚀 高品質プロンプト（設計書モード）を使用")
@@ -105,15 +122,12 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
             if "```json" in plan_json_str:
                 plan_json_str = plan_json_str.split("```json")[1].split("```")[0]
             
-            # ▼▼▼【修正点】jsonライブラリをインポートし、新しいbuild_sql_from_plan関数を呼び出す ▼▼▼
-            import json 
             plan = json.loads(plan_json_str)
             
             with st.expander("📄 AIが生成した分析設計書 (JSON)"):
                 st.json(plan)
             
-            correct_table_name = settings.bigquery.get_full_table_name("campaign")
-            final_sql = build_sql_from_plan(plan, correct_table_name)
+            final_sql = build_sql_from_plan(plan)
         
         # 基本モードの場合（従来通りSQLを直接生成）
         else:

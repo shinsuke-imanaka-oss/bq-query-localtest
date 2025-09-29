@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import streamlit as st
-from context_glossary import get_glossary_for_prompt
+from context_glossary import get_glossary_for_prompt, extract_relevant_glossary
 
 # 設定管理システムの読み込み
 try:
@@ -18,32 +18,70 @@ except ImportError:
     SETTINGS_AVAILABLE = False
     settings = None
 
+# 分析対象としたいテーブル名をリストで定義（今後ここを編集するだけで対象を増減できる）
+TARGET_TABLES = [
+    "LookerStudio_report_campaign",
+    "LookerStudio_report_campaign_device",
+    "LookerStudio_report_ad_group",
+    "LookerStudio_report_ad",
+    "LookerStudio_report_keyword",
+    "LookerStudio_report_device",
+    "LookerStudio_report_gender",
+    "LookerStudio_report_age_group",
+    "LookerStudio_report_budget",
+    "LookerStudio_report_final_url",
+    "LookerStudio_report_hourly",
+    "LookerStudio_report_interest",
+    "LookerStudio_report_placement",
+    "LookerStudio_report_search_query",
+    "LookerStudio_report_area"
+]
+
 @st.cache_data(ttl=3600)
-def get_table_schema_for_prompt(table_name: str) -> str:
-    """指定されたテーブルのスキーマ（列名とデータ型）を取得し、プロンプト用に整形する"""
+def get_table_schema_for_prompt() -> str:
+    """【新・改】複数のターゲットテーブルのスキーマを取得し、プロンプト用に整形する"""
     bq_client = st.session_state.get("bq_client")
-    if not bq_client or not table_name:
+    if not bq_client:
         return "（スキーマ情報を取得できませんでした）"
     
     try:
-        # テーブル名をプロジェクトID, データセットID, テーブルIDに分割
-        project_id, dataset_id, table_id = table_name.split('.')
-        
-        # INFORMATION_SCHEMAをクエリして列情報を取得
+        # 設定ファイルからプロジェクトIDとデータセットIDを取得
+        dataset_id = settings.bigquery.dataset
+        project_id = settings.bigquery.project_id
+
+        # TARGET_TABLESリストのテーブル名を直接IN句で使用する
+        table_list_str = "', '".join(TARGET_TABLES)
+
+        # INFORMATION_SCHEMAを一度にクエリして、複数テーブルの列情報をまとめて取得
         query = f"""
-        SELECT column_name, data_type
+        SELECT table_name, column_name, data_type
         FROM `{project_id}.{dataset_id}.INFORMATION_SCHEMA.COLUMNS`
-        WHERE table_name = '{table_id}'
-        ORDER BY ordinal_position
+        WHERE table_name IN ('{table_list_str}')
+        ORDER BY table_name, ordinal_position
         """
         df = bq_client.query(query).to_dataframe()
         
-        # プロンプトに埋め込むための文字列を作成
-        schema_str = "\n".join([f"- {row.column_name} ({row.data_type})" for index, row in df.iterrows()])
+        if df.empty:
+            st.warning(f"以下のテーブルのスキーマ情報が取得できませんでした: {', '.join(TARGET_TABLES)}")
+            return "（スキーマ情報を取得できませんでした）"
+
+        # テーブルごとに見やすく整形
+        schema_str = ""
+        current_table = ""
+        for _, row in df.iterrows():
+            if row.table_name != current_table:
+                current_table = row.table_name
+                # settingsから取得した情報で完全なテーブル名を再構築して表示
+                full_table_path = f"`{project_id}.{dataset_id}.{current_table}`"
+                schema_str += f"\n### テーブル名: {full_table_path}\n"
+            schema_str += f"- {row.column_name} ({row.data_type})\n"
+
         return schema_str
+
     except Exception as e:
-        st.warning(f"テーブルスキーマの取得に失敗: {e}")
+        st.warning(f"複数テーブルスキーマの取得に失敗: {e}")
         return "（スキーマ情報を取得できませんでした）"
+
 
 # =========================================================================
 # 業界ベンチマーク・定数定義（設定対応版）
@@ -123,9 +161,9 @@ class EnhancedPrompts:
         """デフォルトプロンプトテンプレート"""
         return {
             "sql_planning": """
-            
-            # BigQuery SQLクエリ設計書 作成指示
 
+            # BigQuery SQLクエリ設計書 作成指示
+            
             ## あなたの役割
             あなたは、ユーザーの自然言語による要求を分析し、それを実行するためのSQLクエリの構成要素を**JSON形式で出力する**「SQLプランナー」です。
             **重要: あなたはSQLを直接書いてはいけません。**SQLを組み立てるための「設計書」となるJSONを作ることが、あなたの唯一の仕事です。
@@ -139,32 +177,34 @@ class EnhancedPrompts:
             ## ビジネス用語集
             {context}
 
+            # ▼▼▼【重要】ここからが今回の修正箇所▼▼▼
+            ## 行動原則
+            1.  **テーブル選択:** まず、ユーザー要求と利用可能なテーブルスキーマを分析し、**最も要求に適したテーブルを1つだけ選択**し、その名前をJSONの`table_to_use`キーに設定すること。
+            2.  **分析軸と指標の分離:** ユーザーの要求を「何で（`dimensions`）」と「何を（`metrics`）」に分解して考えること。
+            3.  **スキーマの厳守:** 上記で選択したテーブルのスキーマにリストされていない列名は、**いかなる場合も絶対に使用してはならない。**
+
             ## JSON設計書の出力形式とルール
-            - `select_columns`: 集計しない列（GROUP BY句で使う列）をリストで記述。
-            - `aggregations`: SUM, AVG, SAFE_DIVIDEなど集計関数を使った計算式を記述。`alias`には必ず分かりやすい別名を付ける。
-            - `filters`: WHERE句の条件を記述。`value`にはSQLで使える形式の文字列（例: `'2025-03-01'`）を入れる。
-            - `group_by`: `select_columns`と同じ内容を記述。
-            - `order_by`: `column`には`alias`で付けた名前を使い、`direction`は`DESC`または`ASC`。
-            - `limit`: 結果の行数。不要な場合は省略可。
-            - **スキーマにない列は絶対に使用しないでください。**
-            - **計算不可能な指標（例: F2転換率）を要求された場合は、その指標に対応する`aggregations`の要素を完全に省略してください。**
+            - `table_to_use`: クエリのベースとなるテーブル名（文字列）。
+            - `dimensions`: 分析の軸となる列名（GROUP BY句で使う列）を**文字列のフラットなリスト**で記述。例: `["CampaignName", "DeviceCategory"]`
+            - `metrics`: 計算したい指標を記述。`alias`には必ず分かりやすい別名を付け、`expression`には集計関数を使った計算式を記述。
+            - `filters`: WHERE句の条件を記述。
+            - `order_by`: `alias`で付けた名前を使う。
+            - `limit`: 結果の行数。
             - **必ずJSON形式のコードブロック（```json ... ```）のみを出力してください。解説は一切不要です。**
 
             ## JSON設計書の例
             ```json
             {{
-            "select_columns": ["CampaignName"],
-            "aggregations": [
-                {{"alias": "TotalCost", "expression": "SUM(CostIncludingFees)"}},
-                {{"alias": "ROAS", "expression": "SAFE_DIVIDE(SUM(ConversionValue), SUM(CostIncludingFees))"}}
+            "table_to_use": "LookerStudio_report_keyword",
+            "dimensions": ["Keyword"],
+            "metrics": [
+                {{"alias": "合計クリック数", "expression": "SUM(Clicks)"}},
+                {{"alias": "CTR", "expression": "SAFE_DIVIDE(SUM(Clicks), SUM(Impressions))"}}
             ],
-            "filters": [
-                {{"column": "Date", "operator": "BETWEEN", "value": "'2025-03-01' AND '2025-04-30'"}}
-            ],
-            "group_by": ["CampaignName"],
-            "order_by": {{"column": "ROAS", "direction": "DESC"}},
+            "filters": [],
+            "order_by": {{"column": "CTR", "direction": "DESC"}},
             "limit": 10
-            }}
+            }}            
             """,
                         
             "claude_analysis": """
@@ -196,8 +236,7 @@ class EnhancedPrompts:
         
         # BigQuery設定の取得
         if SETTINGS_AVAILABLE:
-            full_table_name = settings.bigquery.get_full_table_name("campaign")
-            table_schema = get_table_schema_for_prompt(full_table_name)
+            table_schema = get_table_schema_for_prompt()
         else:
             table_schema = "（スキーマ情報なし）"
 
@@ -222,7 +261,7 @@ class EnhancedPrompts:
         industry_benchmark_text = self._format_industry_benchmarks()
         
         # コンテキスト情報の構築  
-        claude_context = self._build_claude_context(context)
+        claude_context = self._build_claude_context(user_input, context)
         
         # プロンプトテンプレートの適用
         enhanced_prompt = self.prompt_templates["claude_analysis"].format(
@@ -261,8 +300,8 @@ class EnhancedPrompts:
         """SQL生成用のコンテキスト情報構築"""
         context_parts = []
 
-        # 用語集を追加
-        glossary = get_glossary_for_prompt()
+        # 関連用語だけを抽出して追加 ▼▼▼
+        glossary = extract_relevant_glossary(user_input)
         context_parts.append(glossary)
 
         # 過去の分析パターンから学習
@@ -287,12 +326,13 @@ class EnhancedPrompts:
         
         return "\n\n".join(context_parts) if context_parts else ""
     
-    def _build_claude_context(self, context: Dict[str, Any]) -> str:
+    def _build_claude_context(self, user_input: str, context: Dict[str, Any]) -> str:
         """Claude分析用のコンテキスト情報構築"""
+        user_input = context.get("user_input", "") 
         context_parts = []
 
         # 用語集を追加
-        glossary = get_glossary_for_prompt()
+        glossary = extract_relevant_glossary(user_input)
         context_parts.append(glossary)
 
         # 分析の背景・目的

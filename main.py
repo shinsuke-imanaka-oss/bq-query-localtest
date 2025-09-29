@@ -748,6 +748,25 @@ def show_environment_debug_page():
             st.error("❌ インポートに失敗しました。")
             st.code(traceback.format_exc())
 
+def show_glossary_ui():
+    """サイドバーに用語集を表示するUI"""
+    with st.sidebar.expander("📖 ビジネス用語集"):
+        try:
+            # 必要なライブラリをここでインポート
+            import pandas as pd
+            from pathlib import Path
+
+            glossary_path = Path("glossary.csv")
+            if glossary_path.exists():
+                df = pd.read_csv(glossary_path)
+                # hide_index=True でDataFrameのインデックス（0, 1, 2...）を非表示にする
+                st.dataframe(df, hide_index=True)
+                st.caption("この用語集は `glossary.csv` を編集することで更新できます。")
+            else:
+                st.info("`glossary.csv` が見つかりません。")
+        except Exception as e:
+            st.error(f"用語集の表示中にエラーが発生: {e}")
+
 # =========================================================================
 # メイン処理
 # =========================================================================
@@ -826,6 +845,9 @@ def main():
             st.session_state.show_config_panel = True
             st.rerun()
         
+        # 用語集表示UIを呼び出す
+        show_glossary_ui()
+
         # --- ↓↓↓ ここからが追加するコードです ↓↓↓ ---
         st.markdown("---")
         st.markdown("### 🧠 AI拡張機能")
@@ -930,3 +952,22 @@ if __name__ == "__main__":
         
         if st.checkbox("🐛 詳細なエラー情報を表示"):
             st.code(traceback.format_exc())
+
+def show_glossary_ui():
+    """サイドバーに用語集を表示するUI"""
+    with st.sidebar.expander("📖 ビジネス用語集"):
+        try:
+            # 必要なライブラリをここでインポート
+            import pandas as pd
+            from pathlib import Path
+
+            glossary_path = Path("glossary.csv")
+            if glossary_path.exists():
+                df = pd.read_csv(glossary_path)
+                # hide_index=True でDataFrameのインデックス（0, 1, 2...）を非表示にする
+                st.dataframe(df, hide_index=True)
+                st.caption("この用語集は `glossary.csv` を編集することで更新できます。")
+            else:
+                st.info("`glossary.csv` が見つかりません。")
+        except Exception as e:
+            st.error(f"用語集の表示中にエラーが発生: {e}")
