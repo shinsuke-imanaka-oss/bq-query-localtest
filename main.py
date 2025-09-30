@@ -224,7 +224,6 @@ def ensure_session_state():
             "last_analysis_result": None,
             "last_sql": "",
             "last_user_input": "",
-            "debug_mode": False,
             "auto_claude_analysis": True,
             "view_mode": "📊 ダッシュボード表示",
             "accessibility_settings": {"high_contrast": False, "large_text": False, "reduced_motion": False}
@@ -305,30 +304,23 @@ def setup_bigquery_client():
 def setup_gemini_client():
     """Gemini APIクライアントのセットアップ（設定対応版）"""
     try:
-            # 設定からAPIキーとモデルを取得
         if SETTINGS_AVAILABLE:
             api_key = settings.get_api_key("gemini")
             model_name = settings.ai.gemini_model
         else:
-            # フォールバック設定
             api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
             model_name = "gemini-1.5-pro"
             
+        # ▼▼▼【重要】APIキーがない場合のエラー処理を修正 ▼▼▼
         if not api_key:
-            #st.error("❌ Gemini API キーが設定されていません")
-            #st.markdown("💡 `.env` ファイルまたはStreamlit Secretsで `GOOGLE_API_KEY` を設定してください")
-            #return None
-            # ValueErrorを意図的に発生させて、エラーハンドリングのテストを行う
-            raise ValueError("APIキーが secrets.toml または .env ファイルに見つかりませんでした。")            
+            st.error("❌ Gemini API キーが見つかりません。")
+            st.markdown("💡 `secrets.toml` または環境変数に `GOOGLE_API_KEY` を設定してください。設定後、このボタンを再度クリックしてください。")
+            return None # エラーを発生させずにNoneを返す
             
         genai.configure(api_key=api_key)
             
-        # 設定からモデルパラメータを取得
         if SETTINGS_AVAILABLE:
-            generation_config = {
-                "temperature": settings.ai.temperature,
-                "max_output_tokens": settings.ai.max_tokens
-            }
+            generation_config = {"temperature": settings.ai.temperature, "max_output_tokens": settings.ai.max_tokens}
         else:
             generation_config = {"temperature": 0.3, "max_output_tokens": 4000}
             
@@ -336,10 +328,9 @@ def setup_gemini_client():
         st.success(f"✅ Gemini API 接続成功 - モデル: {model_name}")
         return model
     except Exception as e:
-        #handle_error_with_ai(e, None, {"operation": "Geminiクライアントのセットアップ"})
-        #return None
-        raise e
-    
+        # 予期せぬエラーはAIエラーハンドラで処理
+        handle_error_with_ai(e, None, {"operation": "Geminiクライアントのセットアップ"})
+        return None
         
 
 def setup_claude_client():
@@ -860,12 +851,12 @@ def main():
         )
         
         # デバッグ設定
-        if SETTINGS_AVAILABLE:
-            current_debug = settings.app.debug_mode
-        else:
-            current_debug = st.session_state.get("debug_mode", False)
-        
-        st.session_state.debug_mode = st.checkbox("🐛 デバッグモード", value=current_debug)
+        # Streamlitのkeyを使ってウィジェットとセッション状態を直接紐付ける
+        st.checkbox(
+            "🐛 デバッグモード",
+            key="debug_mode",
+            help="オンにすると、エラー発生時にAIの内部的な応答やセッション状態などの詳細情報が表示されます。"
+        )
 
         if st.session_state.debug_mode:
             st.markdown("**🔍 デバッグ情報**")
@@ -897,12 +888,17 @@ def main():
     # メインコンテンツ表示
     with col1:
         try:
-            if st.session_state.view_mode == "📊 ダッシュボード表示":
+            # ▼▼▼【重要】ここからが修正箇所 ▼▼▼
+            # どのモードよりも先に、修正案レビュー画面を表示するかを最優先でチェック
+            if st.session_state.get("show_fix_review"):
+                from ui_main import show_sql_fix_review_ui
+                show_sql_fix_review_ui()
+            
+            # 修正案レビュー画面を表示しない場合に、通常のモード別画面を表示
+            elif st.session_state.view_mode == "📊 ダッシュボード表示":
                 show_dashboard_mode()
-            elif st.session_state.view_mode == "🤖 AI分析":
+            elif st.session_state.view_mode in ["🤖 AI分析", "⚙️ 手動SQL実行"]:
                 show_ai_mode()
-            elif st.session_state.view_mode == "⚙️ 手動SQL実行":
-                show_manual_mode()
             elif st.session_state.view_mode == "🩺 システム診断":
                 diagnostics.run_all_checks(
                     settings=settings,
@@ -913,7 +909,8 @@ def main():
             elif st.session_state.view_mode == "📈 監視ダッシュボード":
                 show_monitoring_dashboard()
             elif st.session_state.view_mode == "🔬 環境デバッグ":
-                show_environment_debug_page()            
+                show_environment_debug_page()
+            # ▲▲▲ 修正ここまで ▲▲▲
 
         except Exception as e:
             st.error(f"❌ 表示モードエラー: {str(e)}")

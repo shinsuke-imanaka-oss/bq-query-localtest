@@ -60,10 +60,8 @@ def execute_main_analysis(user_input: str):
             st.error("❌ AIモデルまたはBigQueryクライアントが初期化されていません。"); return
 
         success = run_analysis_flow(
-            gemini_model=gemini_model,
-            user_input=user_input,
-            prompt_system=st.session_state.get("prompt_system", "enhanced"),
-            bq_client=bq_client
+            gemini_model=gemini_model, user_input=user_input,
+            prompt_system=st.session_state.get("prompt_system", "enhanced"), bq_client=bq_client
         )
         if success:
             st.success("✅ 分析が正常に完了しました。")
@@ -71,6 +69,17 @@ def execute_main_analysis(user_input: str):
     except Exception as e:
         context = {"user_input": user_input, "generated_sql": st.session_state.get("last_sql"), "operation": "AI分析実行"}
         handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
+
+        # ▼▼▼【重要】ここからが追加・修正箇所 ▼▼▼
+        # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
+        if st.session_state.get("debug_mode", False):
+            st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
+            st.json(st.session_state.to_dict())
+
+        # 修正案がセッションにセットされていたら、画面を再描画してレビューUIを表示
+        if st.session_state.get("show_fix_review"):
+            st.rerun()
+        # ▲▲▲ 修正ここまで ▲▲▲
     finally:
         st.session_state.analysis_in_progress = False
 
@@ -89,16 +98,27 @@ def execute_manual_sql(sql: str):
             df = execute_sql_query(bq_client, sql)
 
         if df is not None:
-            st.success(f"✅ クエリ実行完了！ {len(df)}行のデータを取得しました。")
             st.session_state.last_analysis_result = df
             st.session_state.last_sql = sql
             st.session_state.last_user_input = "手動SQL実行"
-            st.session_state.pop("show_fix_review", None)
-        else:
-            st.warning("⚠️ クエリは成功しましたが、結果は空でした。")
+            st.session_state.pop("show_fix_review", None) # 成功時はレビューフラグを消す
+            if not df.empty:
+                st.success(f"✅ クエリ実行完了！ {len(df)}行のデータを取得しました。")
+            else:
+                 st.warning("⚠️ クエリは成功しましたが、結果は空でした。")
     except Exception as e:
         context = {"user_input": "手動SQL実行", "sql": sql, "operation": "手動SQL実行"}
         handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
+        
+        # ▼▼▼【重要】ここからが追加・修正箇所 ▼▼▼
+        # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
+        if st.session_state.get("debug_mode", False):
+            st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
+            st.json(st.session_state.to_dict())
+        
+        # 修正案がセッションにセットされていたら、画面を再描画してレビューUIを表示
+        if st.session_state.get("show_fix_review"):
+            st.rerun()
     finally:
         st.session_state.analysis_in_progress = False
 
@@ -193,11 +213,6 @@ def show_analysis_results():
 # =========================================================================
 def show_analysis_workbench(gemini_model, claude_client, claude_model_name, sheet_analysis_queries):
     st.header("🤖 AIアシスタント分析")
-
-    # ✨重要な変更点✨: 修正案レビュー画面を最優先で表示
-    if st.session_state.get("show_fix_review"):
-        show_sql_fix_review_ui()
-        return
 
     # --- 以下は通常のUI表示 ---
     show_analysis_summary_panel()
