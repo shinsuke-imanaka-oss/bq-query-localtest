@@ -67,19 +67,28 @@ def execute_main_analysis(user_input: str):
             st.success("✅ 分析が正常に完了しました。")
             st.session_state.pop("show_fix_review", None)
     except Exception as e:
-        context = {"user_input": user_input, "generated_sql": st.session_state.get("last_sql"), "operation": "AI分析実行"}
+        # contextを作成する際に、正しい変数を使うように修正
+        context = {
+            "user_input": user_input, # "手動SQL実行" ではなく、引数の user_input を使う
+            "sql": st.session_state.get("last_sql", ""), # 未定義の sql ではなく、セッション状態の last_sql を使う
+            "operation": "AI分析実行"
+        }
+
+        # error_handlerを呼び出して、エラー表示と修正案生成を依頼
         handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
 
-        # ▼▼▼【重要】ここからが追加・修正箇所 ▼▼▼
-        # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
-        if st.session_state.get("debug_mode", False):
-            st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
-            st.json(st.session_state.to_dict())
-
-        # 修正案がセッションにセットされていたら、画面を再描画してレビューUIを表示
+        # もし error_handler が修正案を準備してくれていたら...
         if st.session_state.get("show_fix_review"):
+
+            # ▼▼▼【重要】ご指摘のコードをこの位置に配置します ▼▼▼
+            # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
+            if st.session_state.get("debug_mode", False):
+                st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
+                st.json(st.session_state.to_dict())
+
+            # UIを更新してレビュー画面を表示する
             st.rerun()
-        # ▲▲▲ 修正ここまで ▲▲▲
+            
     finally:
         st.session_state.analysis_in_progress = False
 
@@ -108,16 +117,19 @@ def execute_manual_sql(sql: str):
                  st.warning("⚠️ クエリは成功しましたが、結果は空でした。")
     except Exception as e:
         context = {"user_input": "手動SQL実行", "sql": sql, "operation": "手動SQL実行"}
+        # error_handlerを呼び出して、エラー表示と修正案生成を依頼
         handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
-        
-        # ▼▼▼【重要】ここからが追加・修正箇所 ▼▼▼
-        # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
-        if st.session_state.get("debug_mode", False):
-            st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
-            st.json(st.session_state.to_dict())
-        
-        # 修正案がセッションにセットされていたら、画面を再描画してレビューUIを表示
+
+        # もし error_handler が修正案を準備してくれていたら...
         if st.session_state.get("show_fix_review"):
+
+            # ▼▼▼【重要】ご指摘のコードをこの位置に配置します ▼▼▼
+            # デバッグモードが有効なら、st.rerun()の前にセッション状態をすべて表示する
+            if st.session_state.get("debug_mode", False):
+                st.warning("🔍 デバッグ情報: st.session_state の内容 (再描画直前)")
+                st.json(st.session_state.to_dict())
+
+            # UIを更新してレビュー画面を表示する
             st.rerun()
     finally:
         st.session_state.analysis_in_progress = False
@@ -148,11 +160,41 @@ def show_sql_fix_review_ui():
         col1, col2, _ = st.columns([1, 1, 2])
 
         def accept_fix():
-            st.session_state.manual_sql_input = st.session_state.get("sql_fix_suggestion", "")
-            st.session_state.view_mode = "⚙️ 手動SQL実行"
-            st.session_state.pop("show_fix_review", None)
+            """修正案を受け入れ、即座にSQLを実行して結果を表示する"""
+            corrected_sql = st.session_state.get("sql_fix_suggestion", "")
+            if not corrected_sql:
+                st.error("修正案のSQLが見つかりません。")
+                return
+
+            try:
+                # 修正されたSQLを実行
+                with st.spinner("修正されたSQLを実行しています..."):
+                    bq_client = st.session_state.get('bq_client')
+                    df = execute_sql_query(bq_client, corrected_sql)
+                
+                if df is not None:
+                    # 成功したら、セッション状態を更新して結果表示に進む
+                    st.session_state.last_analysis_result = df
+                    st.session_state.last_sql = corrected_sql
+                    # エラー関連のフラグをすべてクリア
+                    st.session_state.pop("show_fix_review", None)
+                    st.session_state.pop("original_erroneous_sql", None)
+                    st.session_state.pop("sql_fix_suggestion", None)
+                    st.success("✅ 修正されたSQLの実行に成功しました。")
+                    st.rerun() # 画面を再描画して結果を表示
+            
+            except Exception as e:
+                # AIの修正案でもエラーが出た場合
+                st.error(f"🤖 AIによる修正案もエラーになりました: {e}")
+                st.info("手動編集モードに切り替えます。")
+                # ユーザーが最終確認できるよう、失敗したSQLを手動編集画面に渡す
+                st.session_state.manual_sql_input = corrected_sql
+                st.session_state.view_mode = "⚙️ 手動SQL実行"
+                st.session_state.pop("show_fix_review", None)
+                st.rerun()
         
         def reject_fix():
+            """元のSQLで手動編集を続ける"""
             st.session_state.manual_sql_input = st.session_state.get("original_erroneous_sql", "")
             st.session_state.view_mode = "⚙️ 手動SQL実行"
             st.session_state.pop("show_fix_review", None)

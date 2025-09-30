@@ -126,48 +126,55 @@ def group_texts_by_meaning(texts: List[str], n_clusters: int = 5) -> Optional[pd
     st.success("✅ グルーピングが完了しました。")
     return df[['text', 'cluster']]
 
-def summarize_cluster_themes(grouped_df: pd.DataFrame, model) -> Dict[int, str]:
+def extract_tags_for_cluster(grouped_df: pd.DataFrame, model) -> Dict[int, List[str]]:
     """
-    【追加提案】各クラスタのテーマをAIに要約させる。
+    各クラスタから複数の特徴的なタグを抽出する。
 
     Args:
         grouped_df (pd.DataFrame): クラスタリング結果のDataFrame。
         model: Geminiモデルのインスタンス。
 
     Returns:
-        Dict[int, str]: クラスタ番号をキー、要約を値とする辞書。
+        Dict[int, List[str]]: クラスタ番号をキー、タグのリストを値とする辞書。
     """
     if not model:
-        st.warning("⚠️ AIモデルが利用できないため、テーマの要約はスキップします。")
+        st.warning("⚠️ AIモデルが利用できないため、タグ抽出はスキップします。")
         return {}
 
-    st.info("🤖 AIが各グループのテーマを分析・要約しています...")
-    themes = {}
+    st.info("🤖 AIが各グループの特徴タグを抽出しています...")
+    cluster_tags = {}
     for cluster_id in sorted(grouped_df['cluster'].unique()):
-        # 各クラスタから最大10件のサンプルを取得
         sample_texts = grouped_df[grouped_df['cluster'] == cluster_id]['text'].sample(min(10, len(grouped_df[grouped_df['cluster'] == cluster_id]))).tolist()
-        
-        # ▼▼▼【重要】この行で変数 texts_for_prompt を定義しています ▼▼▼
-        texts_for_prompt = "\n- ".join(sample_texts)
-        
-        prompt = f"""
-        以下の広告文リストは、AIによって意味的に近いと判断されたグループです。
-        このグループの共通テーマや訴求の切り口を分析し、グループにふさわしい「キャッチーな名前」を1つだけ提案してください。
 
-        広告文リスト:
+        texts_for_prompt = "\n- ".join(sample_texts)
+
+        prompt = f"""
+        # 指示
+        あなたは優秀なマーケティングアナリストです。
+        以下の広告文のリストから、共通する訴求ポイントや特徴を分析し、最大5個の「#」で始まる簡潔なタグを抽出してください。
+
+        # 広告文リスト
         - {texts_for_prompt}
 
-        出力形式:
-        キャッチーな名前
+        # 出力形式（この形式を厳守してください）
+        - 必ず「#」から始まるタグのみを改行区切りで出力してください。
+        - 解説や挨拶は一切不要です。
+
+        # 出力例
+        #送料無料
+        #期間限定セール
+        #初心者向け
         """
-        
+
         try:
             response = model.generate_content(prompt)
-            themes[cluster_id] = response.text.strip().replace("*", "")
+            # 応答テキストを行ごとに分割し、空行などを除去
+            tags = [tag.strip() for tag in response.text.strip().split('\n') if tag.strip()]
+            cluster_tags[cluster_id] = tags
         except Exception as e:
-            themes[cluster_id] = f"要約エラー: {e}"
-            
-    return themes
+            cluster_tags[cluster_id] = [f"タグ抽出エラー: {e}"]
+
+    return cluster_tags
 
 def reduce_dimensions_for_visualization(embeddings_dict: Dict[str, List[float]]) -> Optional[pd.DataFrame]:
     """

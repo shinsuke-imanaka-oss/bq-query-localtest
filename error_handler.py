@@ -64,27 +64,23 @@ def _suggest_sql_fix(e: Exception, model, context: Dict[str, Any]) -> Optional[s
     return None
 
 def handle_error_with_ai(e: Exception, model, context: Dict[str, Any]):
-    """エラーを処理し、AIによる修正案があればレビュー用の情報をセッション状態に格納する"""
+    """エラーを表示し、修正案があればレビュー用の情報をセッション状態に格納する"""
     st.error(f"分析中にエラーが発生しました: {type(e).__name__}")
     with st.expander("エラー詳細"):
         st.code(str(e))
-    _record_error(e, context)
+    
+    _record_error(e, context) # _record_errorは内部関数なので変更なし
     
     if model:
-        fixed_sql = _suggest_sql_fix(e, model, context)
-
-        # --- ▼▼▼ ここからデバッグ機能 ▼▼▼ ---
-        if st.session_state.get("debug_mode", False):
-            st.info(f"🔍 デバッグ: 抽出された修正SQL: {'見つかりました' if fixed_sql else '見つかりませんでした'}")
-            if fixed_sql:
-                st.code(fixed_sql, language="sql")
-        # --- ▲▲▲ デバッグ機能ここまで ▲▲▲ ---
-
+        fixed_sql = _suggest_sql_fix(e, model, context) # _suggest_sql_fixも内部関数なので変更なし
         if fixed_sql:
+            # 修正案が見つかった場合、レビュー画面表示のフラグを立てる
             st.session_state.show_fix_review = True
             st.session_state.original_erroneous_sql = context.get("sql") or context.get("generated_sql")
             st.session_state.sql_fix_suggestion = fixed_sql
+            # ✨ st.rerun() を削除 ✨
         else:
+            # 修正案が見つからなかった場合、AIに原因を解説させる (この部分は変更なし)
             with st.spinner("🤖 AIがエラー原因を分析しています..."):
                 try:
                     prompt = f"""

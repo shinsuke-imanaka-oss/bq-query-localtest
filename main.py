@@ -535,9 +535,24 @@ def show_semantic_search_ui():
                 # 類似キャンペーンを検索
                 similar_campaigns_df = find_similar_texts(target_campaign, all_embeddings, top_n=5)
                 
-                if similar_campaigns_df is not None:
-                    st.success("類似キャンペーンが見つかりました:")
-                    st.dataframe(similar_campaigns_df, width='stretch')
+            if similar_campaigns_df is not None:
+                st.success("類似キャンペーンが見つかりました:")
+                # st.dataframe を以下のように変更
+                st.dataframe(
+                    similar_campaigns_df,
+                    column_config={
+                        "text": st.column_config.TextColumn("キャンペーン名", width="large"),
+                        "similarity": st.column_config.ProgressColumn(
+                            "関連性スコア",
+                            help="基準テキストとの意味的な近さ（1に近いほど関連性が高い）",
+                            format="%.3f",
+                            min_value=0,
+                            max_value=1,
+                        ),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
         else:
             st.error("基準となるキャンペーンを選択してください。")
 
@@ -584,7 +599,7 @@ def show_auto_grouping_ui():
     )
 
     if st.button("🚀 グルーピング実行", type="primary"):
-        from semantic_analyzer import group_texts_by_meaning, summarize_cluster_themes, reduce_dimensions_for_visualization
+        from semantic_analyzer import group_texts_by_meaning, extract_tags_for_cluster, reduce_dimensions_for_visualization
         
         # グルーピング実行
         grouped_df = group_texts_by_meaning(ad_texts, n_clusters)
@@ -592,7 +607,8 @@ def show_auto_grouping_ui():
         if grouped_df is not None:
             # AIによるテーマ要約
             gemini_model = st.session_state.get("gemini_model")
-            cluster_themes = summarize_cluster_themes(grouped_df, gemini_model)
+            cluster_tags = extract_tags_for_cluster(grouped_df, gemini_model)
+            cluster_themes = {cluster_id: ", ".join(tags) for cluster_id, tags in cluster_tags.items()}
 
             # --- 結果表示 ---
             st.subheader("📊 グルーピング結果")
@@ -607,17 +623,20 @@ def show_auto_grouping_ui():
                 vis_df = reduce_dimensions_for_visualization(embeddings_dict)
                 if vis_df is not None:
                     vis_df = pd.merge(vis_df, grouped_df, on='text')
-                    vis_df['cluster'] = vis_df['cluster'].astype(str) # 色分けのため文字列に
-                    
-                    fig = px.scatter(
-                        vis_df, 
-                        x='x', y='y', 
-                        color='cluster', 
-                        hover_name='text',
-                        title='広告クリエイティブの分布マップ',
-                        labels={'color': 'グループ'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+
+                # クラスタごとのテーマをDataFrameに追加
+                vis_df['theme'] = vis_df['cluster'].map(cluster_themes)
+
+                fig = px.scatter(
+                    vis_df, 
+                    x='x', y='y', 
+                    color='theme',  # 色分けをテーマ（概念）で行う
+                    hover_name='text', # マウスオーバーでテキスト全文を表示
+                    title='広告クリエイティブの概念マップ',
+                    labels={'color': 'グループテーマ'}
+                )
+                fig.update_layout(legend_title_text='<b>概念グループ</b>')
+                st.plotly_chart(fig, use_container_width=True)
 
 
             # 各クラスタの詳細

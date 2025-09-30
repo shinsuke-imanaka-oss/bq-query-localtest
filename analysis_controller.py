@@ -81,89 +81,83 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
     st.info("🔄 分析を開始しています...")
     final_sql = "" # final_sqlをtryブロックの外で初期化
 
-    try:
-        if bq_client is None:
-            bq_client = st.session_state.get("bq_client")
+    if bq_client is None:
+        bq_client = st.session_state.get("bq_client")
 
-        if prompt_system == "enhanced":
-            from enhanced_prompts import generate_sql_plan_prompt
-            prompt = generate_sql_plan_prompt(user_input)
-            st.info("🚀 高品質プロンプト（設計書モード）を使用")
+    if prompt_system == "enhanced":
+        from enhanced_prompts import generate_sql_plan_prompt
+        prompt = generate_sql_plan_prompt(user_input)
+        st.info("🚀 高品質プロンプト（設計書モード）を使用")
+    else:
+        from prompts import get_optimized_bigquery_template
+        prompt = get_optimized_bigquery_template(user_input)
+        st.info("⚡ 基本プロンプトを使用")
+
+    st.info("🤖 Gemini が分析プランを設計中...")
+    response = gemini_model.generate_content(prompt)
+
+    if prompt_system == "enhanced":
+        if "```json" in response.text:
+            plan_json_str = response.text.strip().split("```json")[1].split("```")[0]
         else:
-            from prompts import get_optimized_bigquery_template
-            prompt = get_optimized_bigquery_template(user_input)
-            st.info("⚡ 基本プロンプトを使用")
+            plan_json_str = response.text.strip()
+        plan = json.loads(plan_json_str)
+        with st.expander("📄 AIが生成した分析設計書 (JSON)"):
+            st.json(plan)
+        final_sql = build_sql_from_plan(plan)
+    else:
+        sql = response.text.strip()
+        if "```sql" in sql:
+            sql = sql.split("```sql")[1].split("```")[0].strip()
+        final_sql = sql
 
-        st.info("🤖 Gemini が分析プランを設計中...")
-        response = gemini_model.generate_content(prompt)
+    if not final_sql.strip():
+        st.error("❌ SQLが生成されませんでした")
+        return False
 
-        if prompt_system == "enhanced":
-            if "```json" in response.text:
-                plan_json_str = response.text.strip().split("```json")[1].split("```")[0]
-            else:
-                plan_json_str = response.text.strip()
-            plan = json.loads(plan_json_str)
-            with st.expander("📄 AIが生成した分析設計書 (JSON)"):
-                st.json(plan)
-            final_sql = build_sql_from_plan(plan)
+    with st.expander("📄 実行されるSQL (最終版)", expanded=False):
+        st.code(final_sql, language="sql")
+
+    st.session_state.last_sql = final_sql
+    st.session_state.last_user_input = user_input
+
+    st.info("📊 BigQuery でSQL実行中...")
+    # execute_sql_queryでエラーが発生した場合、この関数はここで停止し、
+    # 例外が呼び出し元の ui_main.py に伝播する
+    df = execute_sql_query(bq_client, final_sql)
+
+    if df is not None:
+        if not df.empty:
+            st.session_state.last_analysis_result = df
+            st.success(f"✅ 分析完了！ {len(df)}行のデータを取得しました。")
+            update_usage_stats(user_input, True, prompt_system)
+            st.session_state.pop("show_fix_review", None)
+            return True
         else:
-            sql = response.text.strip()
-            if "```sql" in sql:
-                sql = sql.split("```sql")[1].split("```")[0].strip()
-            final_sql = sql
-
-        if not final_sql.strip():
-            st.error("❌ SQLが生成されませんでした")
-            return False
-
-        with st.expander("📄 実行されるSQL (最終版)", expanded=False):
-            st.code(final_sql, language="sql")
-
-        st.session_state.last_sql = final_sql
-        st.session_state.last_user_input = user_input
-
-        st.info("📊 BigQuery でSQL実行中...")
-        df = execute_sql_query(bq_client, final_sql)
-
-        if df is not None:
-            if not df.empty:
-                st.session_state.last_analysis_result = df
-                st.success(f"✅ 分析完了！ {len(df)}行のデータを取得しました。")
-                update_usage_stats(user_input, True, prompt_system)
-                st.session_state.pop("show_fix_review", None)
-                return True
-            else:
-                st.warning("⚠️ データが取得できませんでした。期間や条件を変えてお試しください。")
-                update_usage_stats(user_input, False, prompt_system)
-                return False
-        else:
+            st.warning("⚠️ データが取得できませんでした。期間や条件を変えてお試しください。")
             update_usage_stats(user_input, False, prompt_system)
             return False
-
-    except Exception as e:
-        st.error(f"分析フローでエラーが発生しました: {type(e).__name__}")
-        context = { "user_input": user_input, "sql": final_sql, "generated_sql": final_sql, "operation": "AI分析実行" }
-        handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
-        update_usage_stats(user_input, False, prompt_system)
-        return False
+    # この関数がFalseを返すのは、SQL生成に失敗した場合か、結果が空の場合のみ
+    return False
 
 
 def execute_sql_query(client, sql: str) -> Optional[pd.DataFrame]:
     """SQL実行。エラーは呼び出し元にraiseして集中的に処理させる"""
     if not sql or not sql.strip():
-        st.error("❌ SQLが空です")
-        return None
+        # st.errorの代わりに例外を発生させる
+        raise ValueError("実行するSQLが空です。")
 
     sql_upper = sql.upper().strip()
     dangerous_keywords = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE']
     if any(keyword in sql_upper for keyword in dangerous_keywords):
-        st.error(f"❌ 危険なSQL操作は実行できません")
-        return None
+        # st.errorの代わりに例外を発生させる
+        raise ValueError(f"危険なSQL操作は実行できません")
 
     if not sql_upper.startswith('SELECT'):
-        st.error("❌ SELECT文のみ実行可能です")
-        return None
+        # st.errorの代わりに例外を発生させる
+        raise ValueError("SELECT文のみ実行可能です")
 
+    # BigQueryのエラーはここでキャッチせず、そのまま呼び出し元に伝播させる
     query_job = client.query(sql)
     df = query_job.to_dataframe()
     return df
