@@ -562,6 +562,28 @@ def show_auto_grouping_ui():
     st.subheader("🧠 広告クリエイティブ自動グルーピング")
     st.markdown("広告文やキャンペーン名を意味の近さで自動的にグループ分けし、主要な訴求パターンを発見します。")
 
+    # --- 1. 過去データのインポート（参照）機能 ---
+    with st.expander("📂 過去のタグデータをアップロードして参照する"):
+        uploaded_file = st.file_uploader(
+            "保存したタグ情報CSVをアップロードしてください",
+            type="csv",
+            help="以前にこのアプリでダウンロードした `semantic_tags_...csv` ファイルを選択してください。"
+        )
+        if uploaded_file is not None:
+            try:
+                past_tags_df = pd.read_csv(uploaded_file)
+                # 要件定義に基づき、必須カラムの存在をチェック
+                required_columns = ['ad_text', 'cluster_id', 'tag', 'analysis_timestamp']
+                if not all(col in past_tags_df.columns for col in required_columns):
+                    st.error(f"❌ ファイルの形式が正しくありません。{', '.join(required_columns)} が含まれるCSVをアップロードしてください。")
+                else:
+                    st.success(f"✅ {len(past_tags_df)}件の過去のタグ情報を読み込みました。")
+                    st.dataframe(past_tags_df, use_container_width=True)
+            except Exception as e:
+                st.error(f"ファイルの読み込みに失敗しました: {e}")
+
+    st.markdown("---")
+
     bq_client = st.session_state.get("bq_client")
     if not bq_client:
         st.warning("BigQueryに接続してください。")
@@ -570,10 +592,9 @@ def show_auto_grouping_ui():
     # --- データ取得 ---
     @st.cache_data(ttl=3600)
     def get_ad_creatives(_bq_client):
-        # 広告テーブルから Headline を取得する例
         query = """
-        SELECT DISTINCT Headline 
-        FROM `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad` 
+        SELECT DISTINCT Headline
+        FROM `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad`
         WHERE Headline IS NOT NULL AND LENGTH(Headline) > 5
         LIMIT 500
         """
@@ -591,21 +612,19 @@ def show_auto_grouping_ui():
 
     # --- UI設定 ---
     n_clusters = st.slider(
-        "分類するグループ数", 
-        min_value=2, 
-        max_value=15, 
-        value=5, 
+        "分類するグループ数",
+        min_value=2,
+        max_value=15,
+        value=5,
         help="広告文をいくつのグループに分けるか指定します。"
     )
 
     if st.button("🚀 グルーピング実行", type="primary"):
         from semantic_analyzer import group_texts_by_meaning, extract_tags_for_cluster, reduce_dimensions_for_visualization
-        
-        # グルーピング実行
+
         grouped_df = group_texts_by_meaning(ad_texts, n_clusters)
-        
+
         if grouped_df is not None:
-            # AIによるテーマ要約
             gemini_model = st.session_state.get("gemini_model")
             cluster_tags = extract_tags_for_cluster(grouped_df, gemini_model)
             cluster_themes = {cluster_id: ", ".join(tags) for cluster_id, tags in cluster_tags.items()}
@@ -614,36 +633,53 @@ def show_auto_grouping_ui():
             st.subheader("📊 グルーピング結果")
 
             # 可視化
-            from semantic_analyzer import generate_embeddings # generate_embeddings をインポート
-            import pandas as pd # pandas をインポート
-            import plotly.express as px # plotly をインポート
+            from semantic_analyzer import generate_embeddings
+            import plotly.express as px
 
-            embeddings_dict = generate_embeddings(grouped_df['text'].tolist()) # 再利用
+            embeddings_dict = generate_embeddings(grouped_df['text'].tolist())
             if embeddings_dict:
                 vis_df = reduce_dimensions_for_visualization(embeddings_dict)
                 if vis_df is not None:
                     vis_df = pd.merge(vis_df, grouped_df, on='text')
+                    vis_df['theme'] = vis_df['cluster'].map(cluster_themes)
+                    vis_df['cluster_str'] = vis_df['cluster'].astype(str)
 
-                # クラスタごとのテーマをDataFrameに追加
-                vis_df['theme'] = vis_df['cluster'].map(cluster_themes)
-
-                fig = px.scatter(
-                    vis_df, 
-                    x='x', y='y', 
-                    color='theme',  # 色分けをテーマ（概念）で行う
-                    hover_name='text', # マウスオーバーでテキスト全文を表示
-                    title='広告クリエイティブの概念マップ',
-                    labels={'color': 'グループテーマ'}
-                )
-                fig.update_layout(legend_title_text='<b>概念グループ</b>')
-                st.plotly_chart(fig, use_container_width=True)
-
+                    fig = px.scatter(
+                        vis_df, x='x', y='y', color='theme', hover_name='text',
+                        title='広告クリエイティブの概念マップ', labels={'color': 'グループテーマ'}
+                    )
+                    fig.update_layout(legend_title_text='<b>概念グループ</b>')
+                    st.plotly_chart(fig, use_container_width=True)
 
             # 各クラスタの詳細
             for cluster_id in sorted(grouped_df['cluster'].unique()):
                 theme_name = cluster_themes.get(cluster_id, f"グループ {cluster_id + 1}")
                 with st.expander(f"**{theme_name}** ({len(grouped_df[grouped_df['cluster'] == cluster_id])}件)"):
                     st.dataframe(grouped_df[grouped_df['cluster'] == cluster_id][['text']], use_container_width=True)
+
+            # --- 2. 今回の結果のエクスポート（保存）機能 ---
+            st.markdown("---")
+            st.subheader("💾 今回の分析結果を保存")
+
+            tags_to_save = []
+            for cluster_id, tags in cluster_tags.items():
+                texts_in_cluster = grouped_df[grouped_df['cluster'] == cluster_id]['text']
+                for text in texts_in_cluster:
+                    for tag in tags:
+                        tags_to_save.append({
+                            "ad_text": text,
+                            "cluster_id": cluster_id,
+                            "tag": tag,
+                            "analysis_timestamp": pd.Timestamp.now(tz="Asia/Tokyo").isoformat()
+                        })
+            save_df = pd.DataFrame(tags_to_save)
+
+            st.download_button(
+                label="📥 このタグ付け結果をCSVでダウンロード",
+                data=save_df.to_csv(index=False, encoding='utf-8-sig'), # Excelでの文字化け対策
+                file_name=f"semantic_tags_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime='text/csv',
+            )
 
 
 def show_ai_mode():
