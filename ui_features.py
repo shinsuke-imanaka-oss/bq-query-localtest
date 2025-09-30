@@ -108,13 +108,14 @@ def show_error_history():
             st.markdown("### 最近のエラー")
             
             for i, error in enumerate(st.session_state.error_history[-5:], 1):
-                st.markdown(f"**{i}. {error['timestamp'].strftime('%H:%M:%S')}**")
+                # ▼▼▼【重要】.strftime(...) を削除して、文字列をそのまま表示する ▼▼▼
+                st.markdown(f"**{i}. {error['timestamp']}**")
                 st.write(f"エラー: {error['error_message']}")
                 if error.get('suggestion'):
-                    st.info(error['suggestion'])
+                    st.info(f"提案: {error['suggestion']}")
                 st.markdown("---")
     else:
-        st.success("✅ エラーはありません")
+        st.success("✅ これまでに記録されたエラーはありません。")
 
 # =========================================================================
 # 使用統計表示

@@ -1,7 +1,4 @@
 # analysis_controller.py
-"""
-分析制御システム
-"""
 
 import streamlit as st
 import pandas as pd
@@ -24,7 +21,6 @@ except ImportError:
     def handle_error_with_ai(e, model, context):
         st.error(f"❌ エラーハンドラが利用できません: {e}")
 
-# --- ここからが修正・追加箇所 ---
 
 def build_sql_from_plan(plan: dict) -> str:
     """AIが生成した設計書(plan)から、安全なSQL文を組み立てる"""
@@ -59,16 +55,11 @@ def build_sql_from_plan(plan: dict) -> str:
         for f in plan.get("filters", []):
             if isinstance(f, dict) and all(k in f for k in ["column", "operator", "value"]):
                 column, operator, value = f['column'], f['operator'], f['value']
-                
-                # ▼▼▼【重要】ご指摘の箇所を修正 ▼▼▼
                 if isinstance(value, str):
-                    # シングルクォート(')を、SQL内で安全な2つのシングルクォート('')に置換する
                     escaped_value = value.replace("'", "''")
                     value_str = f"'{escaped_value}'"
                 else:
                     value_str = str(value)
-                # ▲▲▲ 修正ここまで ▲▲▲
-
                 conditions.append(f"`{column}` {operator} {value_str}")
         if conditions:
             where_clause = "WHERE\n  " + "\n  AND ".join(conditions)
@@ -107,13 +98,11 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
         response = gemini_model.generate_content(prompt)
 
         if prompt_system == "enhanced":
-            # 応答テキストからJSON部分を安全に抽出
             if "```json" in response.text:
                 plan_json_str = response.text.strip().split("```json")[1].split("```")[0]
             else:
-                 plan_json_str = response.text.strip()
+                plan_json_str = response.text.strip()
             plan = json.loads(plan_json_str)
-            
             with st.expander("📄 AIが生成した分析設計書 (JSON)"):
                 st.json(plan)
             final_sql = build_sql_from_plan(plan)
@@ -134,14 +123,13 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
         st.session_state.last_user_input = user_input
 
         st.info("📊 BigQuery でSQL実行中...")
-        df = execute_sql_query(bq_client, final_sql) # ここでエラーが発生する可能性がある
+        df = execute_sql_query(bq_client, final_sql)
 
         if df is not None:
             if not df.empty:
                 st.session_state.last_analysis_result = df
                 st.success(f"✅ 分析完了！ {len(df)}行のデータを取得しました。")
                 update_usage_stats(user_input, True, prompt_system)
-                # 成功した場合は、修正レビュー画面の表示フラグを消す
                 st.session_state.pop("show_fix_review", None)
                 return True
             else:
@@ -149,49 +137,36 @@ def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic
                 update_usage_stats(user_input, False, prompt_system)
                 return False
         else:
-            # execute_sql_queryがNoneを返すのはエラー時
             update_usage_stats(user_input, False, prompt_system)
             return False
 
     except Exception as e:
-        # ここでエラーを捕捉し、AI修正フローを呼び出す
         st.error(f"分析フローでエラーが発生しました: {type(e).__name__}")
-        context = {
-            "user_input": user_input,
-            "sql": final_sql, # tryブロック内で生成されたSQL
-            "generated_sql": final_sql, # 互換性のため
-            "operation": "AI分析実行"
-        }
-        # st.session_stateからモデルを取得して渡す
+        context = { "user_input": user_input, "sql": final_sql, "generated_sql": final_sql, "operation": "AI分析実行" }
         handle_error_with_ai(e, st.session_state.get('gemini_model'), context)
         update_usage_stats(user_input, False, prompt_system)
         return False
 
 
 def execute_sql_query(client, sql: str) -> Optional[pd.DataFrame]:
-    """SQL実行（エラー時にNoneを返すように修正）"""
-    try:
-        if not sql or not sql.strip():
-            st.error("❌ SQLが空です")
-            return None
+    """SQL実行。エラーは呼び出し元にraiseして集中的に処理させる"""
+    if not sql or not sql.strip():
+        st.error("❌ SQLが空です")
+        return None
 
-        sql_upper = sql.upper().strip()
-        dangerous_keywords = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE']
-        if any(keyword in sql_upper for keyword in dangerous_keywords):
-            st.error(f"❌ 危険なSQL操作は実行できません")
-            return None
+    sql_upper = sql.upper().strip()
+    dangerous_keywords = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE']
+    if any(keyword in sql_upper for keyword in dangerous_keywords):
+        st.error(f"❌ 危険なSQL操作は実行できません")
+        return None
 
-        if not sql_upper.startswith('SELECT'):
-            st.error("❌ SELECT文のみ実行可能です")
-            return None
+    if not sql_upper.startswith('SELECT'):
+        st.error("❌ SELECT文のみ実行可能です")
+        return None
 
-        query_job = client.query(sql)
-        df = query_job.to_dataframe()
-        return df
-
-    except Exception as e:
-        # エラーを呼び出し元にraiseして、そこで集中的に処理させる
-        raise e
+    query_job = client.query(sql)
+    df = query_job.to_dataframe()
+    return df
 
 
 def update_usage_stats(user_input: str, success: bool, system: str):

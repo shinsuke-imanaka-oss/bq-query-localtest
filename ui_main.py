@@ -202,11 +202,38 @@ def show_manual_sql_interface():
         execute_manual_sql(manual_sql)
 
 def show_analysis_results():
+    """分析結果と、それに関連する付加情報をタブで表示する"""
     if st.session_state.get("last_analysis_result") is not None:
         st.markdown("---")
         st.subheader("📊 最新の分析結果")
-        st.dataframe(st.session_state.last_analysis_result, use_container_width=True)
-        show_quick_reanalysis()
+        
+        # 分析結果のデータフレームを表示
+        df = st.session_state.last_analysis_result
+        st.dataframe(df, use_container_width=True)
+
+        # タブを使って、追加情報を整理して表示する
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🔄 クイック操作", 
+            "🔍 データ品質", 
+            "📈 使用統計",
+            "⚠️ エラー履歴"
+        ])
+
+        with tab1:
+            # 「クイック再分析」機能をここに移動
+            show_quick_reanalysis()
+
+        with tab2:
+            # 「データ品質パネル」を呼び出す
+            show_data_quality_panel()
+
+        with tab3:
+            # 「使用統計」を呼び出す
+            show_usage_statistics()
+
+        with tab4:
+            # 「エラー履歴」を呼び出す
+            show_error_history()
 
 # =========================================================================
 # メインのワークベンチ関数
