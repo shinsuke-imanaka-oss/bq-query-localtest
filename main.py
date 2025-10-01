@@ -557,23 +557,26 @@ def show_semantic_search_ui():
             st.error("基準となるキャンペーンを選択してください。")
 
 def show_auto_grouping_ui():
-    """セマンティック分析による自動グルーピングUI (HDBSCAN対応版)"""
+    """セマンティック分析による自動グルーピングUI (結果保持機能付き)"""
     st.markdown("---")
     st.subheader("🧠 広告クリエイティブ自動グルーピング")
-    st.markdown("AIがデータの密度に基づき、意味的に自然なグループを自動で発見します。") # 説明文を更新
+    st.markdown("AIがデータの密度に基づき、意味的に自然なグループを自動で発見します。")
 
     # --- 1. 過去データのインポート（参照）機能 ---
     with st.expander("📂 過去のタグデータをアップロードして参照する"):
         uploaded_file = st.file_uploader(
             "保存したタグ情報CSVをアップロードしてください",
             type="csv",
+            key="grouping_csv_uploader", # keyを追加してウィジェットを区別
             help="以前にこのアプリでダウンロードした `semantic_tags_...csv` ファイルを選択してください。"
         )
         if uploaded_file is not None:
             try:
                 past_tags_df = pd.read_csv(uploaded_file)
-                required_columns = ['ad_text', 'cluster_id', 'tag', 'analysis_timestamp']
-                if not all(col in past_tags_df.columns for col in past_tags_df.columns):
+                if 'ad_text' in past_tags_df.columns:
+                    past_tags_df.rename(columns={'ad_text': 'analyzed_text'}, inplace=True)
+                required_columns = ['analyzed_text', 'cluster_id', 'tag']
+                if not all(col in past_tags_df.columns for col in required_columns):
                      st.error(f"❌ ファイルの形式が正しくありません。{', '.join(required_columns)} が含まれるCSVをアップロードしてください。")
                 else:
                     st.success(f"✅ {len(past_tags_df)}件の過去のタグ情報を読み込みました。")
@@ -588,115 +591,149 @@ def show_auto_grouping_ui():
         st.warning("BigQueryに接続してください。")
         return
 
-    # --- データ取得 ---
+    # --- 分析対象の定義 ---
+    ANALYSIS_TARGETS = {
+        "広告文 (Headline)": ("LookerStudio_report_ad", "Headline"),
+        "キーワード": ("LookerStudio_report_keyword", "Keyword"),
+        "広告グループ名": ("LookerStudio_report_ad_group", "AdGroupName_unified"),
+        "キャンペーン名": ("LookerStudio_report_campaign", "CampaignName"),
+    }
+
+    selected_target_label = st.selectbox(
+        "分析対象のテキスト列を選択してください",
+        options=list(ANALYSIS_TARGETS.keys()),
+        index=0
+    )
+    table_name, selected_column = ANALYSIS_TARGETS[selected_target_label]
+
     @st.cache_data(ttl=3600)
-    def get_ad_creatives(_bq_client):
-        query = """
-        SELECT DISTINCT Headline
-        FROM `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_ad`
-        WHERE Headline IS NOT NULL AND LENGTH(Headline) > 5
+    def get_text_data(_bq_client, table_name, column_name):
+        query = f"""
+        SELECT DISTINCT {column_name} AS text_data
+        FROM `vorn-digi-mktg-poc-635a.toki_air.{table_name}`
+        WHERE {column_name} IS NOT NULL AND LENGTH({column_name}) > 5
         LIMIT 500
         """
         try:
             df = _bq_client.query(query).to_dataframe()
-            return df["Headline"].tolist()
+            return df["text_data"].tolist()
         except Exception as e:
-            st.error(f"広告クリエイティブの取得に失敗しました: {e}")
+            st.error(f"「{column_name}」列のデータ取得に失敗: {e}")
             return []
 
-    ad_texts = get_ad_creatives(bq_client)
+    ad_texts = get_text_data(bq_client, table_name, selected_column)
     if not ad_texts:
-        st.info("分析対象の広告データがありません。")
+        st.info(f"分析対象のデータ（{selected_column}）がありません。")
         return
 
-    # --- UI設定 ---
     min_cluster_size = st.slider(
         "グループの最小サイズ",
-        min_value=2,
-        max_value=10,
-        value=3,
-        help="何個以上の広告文が集まったら一つのグループと見なすかを設定します。値を小さくすると、より細かいグループが検出されやすくなります。"
+        min_value=2, max_value=10, value=3,
+        help="何個以上の広告文が集まったら一つのグループと見なすかを設定します。"
     )
 
+    # ▼▼▼【ここからが今回の修正箇所です】▼▼▼
+
+    # --- 実行ボタンが押された時の処理 ---
     if st.button("🚀 グルーピング実行", type="primary"):
-        from semantic_analyzer import group_texts_by_meaning, extract_tags_for_cluster, reduce_dimensions_for_visualization
-
-        # --- ▼▼▼ HDBSCANに対応した呼び出し ▼▼▼ ---
-        grouped_df = group_texts_by_meaning(ad_texts, min_cluster_size=min_cluster_size)
-
-        if grouped_df is not None:
-            # ノイズ(-1)を除いたデータでタグを抽出
-            grouped_df_for_tags = grouped_df[grouped_df['cluster'] != -1].copy()
-
-            gemini_model = st.session_state.get("gemini_model")
-            cluster_tags = extract_tags_for_cluster(grouped_df_for_tags, gemini_model)
-            cluster_themes = {cluster_id: ", ".join(tags) for cluster_id, tags in cluster_tags.items()}
-            # ノイズ(-1)用のテーマを追加
-            cluster_themes[-1] = "ノイズ / 分類外"
-
-            # --- 結果表示 ---
-            st.subheader("📊 グルーピング結果")
-
-            # 可視化
-            from semantic_analyzer import generate_embeddings
+        with st.spinner("AIによるグルーピングを実行中です..."):
+            from semantic_analyzer import group_texts_by_meaning, extract_tags_for_cluster, reduce_dimensions_for_visualization, generate_embeddings
             import pandas as pd
-            import plotly.express as px
 
-            embeddings_dict = generate_embeddings(grouped_df['text'].tolist())
-            if embeddings_dict:
-                vis_df = reduce_dimensions_for_visualization(embeddings_dict)
-                if vis_df is not None:
-                    vis_df = pd.merge(vis_df, grouped_df, on='text')
-                    vis_df['theme'] = vis_df['cluster'].map(cluster_themes)
+            grouped_df = group_texts_by_meaning(ad_texts, min_cluster_size=min_cluster_size)
 
-                    fig = px.scatter(
-                        vis_df, x='x', y='y', color='theme', hover_name='text',
-                        title='広告クリエイティブの概念マップ', labels={'color': 'グループテーマ'},
-                        # ノイズ(-1)の色を灰色に固定
-                        color_discrete_map={"ノイズ / 分類外": "lightgrey"}
-                    )
-                    fig.update_layout(legend_title_text='<b>概念グループ</b>')
-                    st.plotly_chart(fig, use_container_width=True)
+            if grouped_df is not None:
+                grouped_df_for_tags = grouped_df[grouped_df['cluster'] != -1].copy()
+                gemini_model = st.session_state.get("gemini_model")
+                cluster_tags = extract_tags_for_cluster(grouped_df_for_tags, gemini_model)
+                cluster_themes = {cluster_id: ", ".join(tags) for cluster_id, tags in cluster_tags.items()}
+                cluster_themes[-1] = "ノイズ / 分類外"
 
-            # 各クラスタの詳細
-            for cluster_id in sorted(grouped_df['cluster'].unique()):
-                if cluster_id == -1: continue # ノイズは後でまとめて表示
-                theme_name = cluster_themes.get(cluster_id, f"グループ {cluster_id + 1}")
-                with st.expander(f"**{theme_name}** ({len(grouped_df[grouped_df['cluster'] == cluster_id])}件)"):
-                    st.dataframe(grouped_df[grouped_df['cluster'] == cluster_id][['text']], use_container_width=True)
+                embeddings_dict = generate_embeddings(grouped_df['text'].tolist())
+                vis_df = None
+                if embeddings_dict:
+                    vis_df_raw = reduce_dimensions_for_visualization(embeddings_dict)
+                    if vis_df_raw is not None:
+                        vis_df = pd.merge(vis_df_raw, grouped_df, on='text')
+                        vis_df['theme'] = vis_df['cluster'].map(cluster_themes)
 
-            # ノイズ(-1)の詳細表示
-            noise_df = grouped_df[grouped_df['cluster'] == -1]
-            if not noise_df.empty:
-                with st.expander(f"**ノイズ / 分類外** ({len(noise_df)}件)"):
-                    st.dataframe(noise_df[['text']], use_container_width=True)
-            # --- ▲▲▲ HDBSCANに対応した結果表示ここまで ▲▲▲ ---
+                # 結果をセッション状態に保存
+                st.session_state.grouping_results = {
+                    "grouped_df": grouped_df,
+                    "cluster_themes": cluster_themes,
+                    "vis_df": vis_df,
+                    "cluster_tags": cluster_tags,
+                    "selected_column": selected_column # 分析対象列も保存
+                }
+            else:
+                st.session_state.grouping_results = None
+                st.error("グルーピングに失敗しました。")
 
-            # --- 2. 今回の結果のエクスポート（保存）機能 ---
-            st.markdown("---")
-            st.subheader("💾 今回の分析結果を保存")
+    # --- セッション状態に保存された結果があれば表示する ---
+    if "grouping_results" in st.session_state and st.session_state.grouping_results:
+        import plotly.express as px
+        import pandas as pd
 
-            tags_to_save = []
-            # ノイズ(-1)にはタグがないため、cluster_tagsからループ
-            for cluster_id, tags in cluster_tags.items():
-                texts_in_cluster = grouped_df[grouped_df['cluster'] == cluster_id]['text']
-                for text in texts_in_cluster:
-                    for tag in tags:
-                        tags_to_save.append({
-                            "ad_text": text,
-                            "cluster_id": cluster_id,
-                            "tag": tag,
-                            "analysis_timestamp": pd.Timestamp.now(tz="Asia/Tokyo").isoformat()
-                        })
-            save_df = pd.DataFrame(tags_to_save)
+        # セッションから結果を読み込む
+        results = st.session_state.grouping_results
+        grouped_df = results["grouped_df"]
+        cluster_themes = results["cluster_themes"]
+        vis_df = results["vis_df"]
+        cluster_tags = results["cluster_tags"]
+        selected_column = results["selected_column"]
 
-            st.download_button(
-                label="📥 このタグ付け結果をCSVでダウンロード",
-                data=save_df.to_csv(index=False, encoding='utf-8-sig'),
-                file_name=f"semantic_tags_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime='text/csv',
+        st.subheader("📊 グルーピング結果")
+
+        # 可視化
+        if vis_df is not None:
+            fig = px.scatter(
+                vis_df, x='x', y='y', color='theme', hover_name='text',
+                title='広告クリエイティブの概念マップ', labels={'color': 'グループテーマ'},
+                color_discrete_map={"ノイズ / 分類外": "lightgrey"}
             )
+            fig.update_layout(legend_title_text='<b>概念グループ</b>')
+            st.plotly_chart(fig, use_container_width=True)
 
+        # 各クラスタの詳細
+        for cluster_id in sorted(grouped_df['cluster'].unique()):
+            if cluster_id == -1: continue
+            theme_name = cluster_themes.get(cluster_id, f"グループ {cluster_id + 1}")
+            with st.expander(f"**{theme_name}** ({len(grouped_df[grouped_df['cluster'] == cluster_id])}件)"):
+                st.dataframe(grouped_df[grouped_df['cluster'] == cluster_id][['text']], use_container_width=True)
+
+        noise_df = grouped_df[grouped_df['cluster'] == -1]
+        if not noise_df.empty:
+            with st.expander(f"**ノイズ / 分類外** ({len(noise_df)}件)"):
+                st.dataframe(noise_df[['text']], use_container_width=True)
+        
+        # ダウンロード機能
+        st.markdown("---")
+        st.subheader("💾 今回の分析結果を保存")
+        
+        tags_to_save = []
+        for cluster_id, tags in cluster_tags.items():
+            texts_in_cluster = grouped_df[grouped_df['cluster'] == cluster_id]['text']
+            for text in texts_in_cluster:
+                for tag in tags:
+                    tags_to_save.append({
+                        "analyzed_text": text,
+                        "cluster_id": cluster_id,
+                        "tag": tag,
+                        "analysis_timestamp": pd.Timestamp.now(tz="Asia/Tokyo").isoformat()
+                    })
+        save_df = pd.DataFrame(tags_to_save)
+
+        if not save_df.empty:
+            save_df['analysis_target_column'] = selected_column
+            new_column_order = ['analysis_target_column', 'analyzed_text', 'cluster_id', 'tag', 'analysis_timestamp']
+            save_df = save_df[new_column_order]
+
+        st.download_button(
+            label="📥 このタグ付け結果をCSVでダウンロード",
+            data=save_df.to_csv(index=False, encoding='utf-8-sig'),
+            file_name=f"semantic_tags_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime='text/csv',
+        )
 
 def show_ai_mode():
     """AI分析モード"""

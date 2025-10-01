@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 import json
 
 # --- 安全なインポート ---
@@ -76,17 +76,18 @@ def build_sql_from_plan(plan: dict) -> str:
     return final_sql + ";"
 
 
-def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic", bq_client=None) -> bool:
+def run_analysis_flow(gemini_model, user_input: str, prompt_system: str = "basic", bq_client=None, tag_context: Optional[Dict] = None) -> bool:
     """分析フローの実行（エラーハンドリング強化版）"""
     st.info("🔄 分析を開始しています...")
-    final_sql = "" # final_sqlをtryブロックの外で初期化
+    final_sql = ""
 
     if bq_client is None:
         bq_client = st.session_state.get("bq_client")
 
     if prompt_system == "enhanced":
         from enhanced_prompts import generate_sql_plan_prompt
-        prompt = generate_sql_plan_prompt(user_input)
+        # REQ-A2-03: タグ情報をプロンプト生成関数に渡す
+        prompt = generate_sql_plan_prompt(user_input, context=tag_context)
         st.info("🚀 高品質プロンプト（設計書モード）を使用")
     else:
         from prompts import get_optimized_bigquery_template

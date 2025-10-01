@@ -30,6 +30,14 @@ except ImportError:
     def show_usage_statistics(): st.info("使用統計機能は一時的に利用できません")
     def show_quick_reanalysis(): st.info("再分析機能は一時的に利用できません")
 
+try:
+    from data_processing import process_uploaded_csv, merge_data_with_tags, filter_data_by_tags
+except ImportError:
+    st.sidebar.error("❌ data_processing.py が見つかりません。")
+    def process_uploaded_csv(file): return None
+    def merge_data_with_tags(df1, df2): return df1
+    def filter_data_by_tags(df, tags): return df
+
 # =========================================================================
 # 分析レシピの定義
 # =========================================================================
@@ -58,6 +66,12 @@ def execute_main_analysis(user_input: str):
         bq_client = st.session_state.get('bq_client')
         if not gemini_model or not bq_client:
             st.error("❌ AIモデルまたはBigQueryクライアントが初期化されていません。"); return
+        
+        # REQ-A2-03: AIにタグのコンテキストを渡す
+        tag_context = {}
+        if 'tag_df' in st.session_state and st.session_state.tag_df is not None:
+            unique_tags = st.session_state.tag_df['tag'].unique().tolist()
+            tag_context = {"available_tags": unique_tags}
 
         success = run_analysis_flow(
             gemini_model=gemini_model, user_input=user_input,
@@ -205,6 +219,37 @@ def show_sql_fix_review_ui():
 # =========================================================================
 # UIコンポーネント関数群
 # =========================================================================
+# REQ-A1-01, REQ-A2-01: サイドバーにタグフィルター機能を追加
+def show_sidebar_tag_filter():
+    """サイドバーにタグCSVアップロードとフィルターを表示する"""
+    with st.sidebar.expander("🏷️ タグで絞り込む", expanded=True):
+        uploaded_file = st.file_uploader(
+            "タグCSVをアップロード",
+            type="csv",
+            help="`ad_text`と`tag`列を持つCSVファイルをアップロードしてください。"
+        )
+
+        if uploaded_file:
+            # ファイルがアップロードされたら処理を実行
+            tag_df = process_uploaded_csv(uploaded_file)
+            st.session_state.tag_df = tag_df
+        
+        # NFR-01: クリアボタン
+        if st.button("タグ情報をクリア"):
+           st.session_state.tag_df = None
+           st.session_state.selected_tags = []
+           st.rerun()
+
+        # REQ-A2-01: タグDataFrameがあればフィルターを表示
+        if 'tag_df' in st.session_state and st.session_state.tag_df is not None:
+            tag_df = st.session_state.tag_df
+            unique_tags = sorted(tag_df['tag'].unique())
+            st.session_state.selected_tags = st.multiselect(
+                "タグを選択",
+                options=unique_tags,
+                default=st.session_state.get('selected_tags', [])
+            )
+
 def show_ai_selection():
     st.markdown("### 🤖 AI選択")
     # ... (省略)
@@ -245,13 +290,26 @@ def show_manual_sql_interface():
 
 def show_analysis_results():
     """分析結果と、それに関連する付加情報をタブで表示する"""
+    # last_analysis_result が存在するか確認
     if st.session_state.get("last_analysis_result") is not None:
         st.markdown("---")
         st.subheader("📊 最新の分析結果")
         
-        # 分析結果のデータフレームを表示
-        df = st.session_state.last_analysis_result
-        st.dataframe(df, use_container_width=True)
+        # REQ-A1-03: タグ情報があれば結合する
+        main_df = st.session_state.last_analysis_result
+        tag_df = st.session_state.get("tag_df")
+        
+        # 常に結合を試みる。結合キーがなければ、merge_data_with_tagsが元のdfを返す。
+        display_df = merge_data_with_tags(main_df, tag_df)
+        
+        # REQ-A2-02: タグでフィルタリング
+        selected_tags = st.session_state.get("selected_tags", [])
+        
+        # 'tag'列が結合によって追加されていたらフィルタリングを実行
+        if selected_tags and 'tag' in display_df.columns:
+            display_df = filter_data_by_tags(display_df, selected_tags)
+
+        st.dataframe(display_df, use_container_width=True)
 
         # タブを使って、追加情報を整理して表示する
         tab1, tab2, tab3, tab4 = st.tabs([
@@ -282,6 +340,9 @@ def show_analysis_results():
 # =========================================================================
 def show_analysis_workbench(gemini_model, claude_client, claude_model_name, sheet_analysis_queries):
     st.header("🤖 AIアシスタント分析")
+
+    # --- サイドバーの表示 ---
+    show_sidebar_tag_filter()
 
     # --- 以下は通常のUI表示 ---
     show_analysis_summary_panel()

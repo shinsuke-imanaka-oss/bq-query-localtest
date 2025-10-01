@@ -241,6 +241,7 @@ class EnhancedPrompts:
             table_schema = "（スキーマ情報なし）"
 
         # コンテキスト情報の構築
+        # REQ-A2-03: タグコンテキストを受け取れるように引数を変更
         sql_context = self._build_sql_context(user_input, context)
         
         # プロンプトテンプレートの適用
@@ -300,7 +301,20 @@ class EnhancedPrompts:
         """SQL生成用のコンテキスト情報構築"""
         context_parts = []
 
-        # 関連用語だけを抽出して追加 ▼▼▼
+        # REQ-A2-03: 利用可能なタグリストをコンテキストに追加
+        if context and "available_tags" in context:
+            tags = context["available_tags"]
+            if tags:
+                tag_list_str = ", ".join([f"'{tag}'" for tag in tags])
+                tag_info = (
+                    "## ユーザー定義タグ\n"
+                    f"- `tag` という列が分析に利用可能です。これはユーザーがアップロードした広告の分類ラベルです。\n"
+                    f"- 利用可能なタグ: [{tag_list_str}]\n"
+                    "- ユーザーがこれらのタグ名で質問した場合、`tag`列をWHERE句でフィルタリングしてください。"
+                )
+                context_parts.append(tag_info)
+
+        # 関連用語だけを抽出して追加
         glossary = extract_relevant_glossary(user_input)
         context_parts.append(glossary)
 
@@ -495,6 +509,7 @@ except Exception as e:
 def generate_sql_plan_prompt(user_input: str, context: Dict[str, Any] = None) -> str:
     """【新】強化SQL「設計書」生成プロンプト（エントリーポイント）"""
     if enhanced_prompts:
+        # REQ-A2-03: contextをそのまま渡す
         return enhanced_prompts.generate_sql_plan_prompt(user_input, context)
     else:
         # フォールバック処理
