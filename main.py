@@ -208,6 +208,41 @@ except ImportError as e:
     print(f"⚠️ looker_handler.py インポートエラー: {e}")
     IMPORT_STATUS["looker_handler"] = False
 
+#パフォーマンス診断機能
+try:
+    from performance_analyzer import run_performance_diagnosis
+    IMPORT_STATUS["performance_analyzer"] = True
+    print("✅ performance_analyzer.py インポート成功")
+except ImportError as e:
+    print(f"⚠️ performance_analyzer.py インポートエラー: {e}")
+    IMPORT_STATUS["performance_analyzer"] = False
+
+#時系列診断機能
+try:
+    from forecast_analyzer import run_forecast_analysis
+    IMPORT_STATUS["forecast_analyzer"] = True
+    print("✅ forecast_analyzer.py インポート成功")
+except ImportError as e:
+    print(f"⚠️ forecast_analyzer.py インポートエラー: {e}")
+    IMPORT_STATUS["forecast_analyzer"] = False
+
+#インサイト分析機能
+try:
+    from insight_miner import run_insight_analysis
+    IMPORT_STATUS["insight_miner"] = True
+    print("✅ insight_miner.py インポート成功")
+except ImportError as e:
+    print(f"⚠️ insight_miner.py インポートエラー: {e}")
+    IMPORT_STATUS["insight_miner"] = False
+
+#戦略立案機能
+try:
+    from strategy_simulator import run_strategy_simulation
+    IMPORT_STATUS["strategy_simulator"] = True
+    print("✅ strategy_simulator.py インポート成功")
+except ImportError as e:
+    print(f"⚠️ strategy_simulator.py インポートエラー: {e}")
+    IMPORT_STATUS["strategy_simulator"] = False
 # =========================================================================
 # セッション状態管理（設定対応版）
 # =========================================================================
@@ -895,7 +930,7 @@ def main():
         st.header("🎛️ システム制御")
         
         # 表示モード選択
-        view_options = ["📊 ダッシュボード表示", "🤖 AI分析", "⚙️ 手動SQL実行", "🩺 システム診断", "📈 監視ダッシュボード", "🔬 環境デバッグ"]
+        view_options = ["💡 戦略提案 & シミュレーション", "📈 パフォーマンス診断", "🔮 予測分析 & 異常検知", "🧠 自動インサイト分析", "📊 ダッシュボード表示", "🤖 AI分析", "⚙️ 手動SQL実行", "🩺 システム診断", "📈 監視ダッシュボード", "🔬 環境デバッグ"]
         st.session_state.view_mode = st.selectbox(
             "表示モード選択",
             view_options,
@@ -1003,6 +1038,29 @@ def main():
                 show_sql_fix_review_ui()
             
             # 修正案レビュー画面を表示しない場合に、通常のモード別画面を表示
+            if st.session_state.get("show_fix_review"):
+                from ui_main import show_sql_fix_review_ui
+                show_sql_fix_review_ui()
+            elif st.session_state.view_mode == "💡 戦略提案 & シミュレーション": # この elif ブロックを丸ごと追加
+                if IMPORT_STATUS.get("strategy_simulator"):
+                    run_strategy_simulation()
+                else:
+                    st.error("❌ 戦略提案モジュールがロードされていません。")
+            elif st.session_state.view_mode == "📈 パフォーマンス診断":
+                if IMPORT_STATUS.get("performance_analyzer"):
+                    run_performance_diagnosis()
+                else:
+                    st.error("❌ パフォーマンス診断モジュールがロードされていません。")
+            elif st.session_state.view_mode == "🔮 予測分析 & 異常検知": # この elif ブロックを丸ごと追加
+                if IMPORT_STATUS.get("forecast_analyzer"):
+                    run_forecast_analysis()
+                else:
+                    st.error("❌ 予測分析モジュールがロードされていません。")
+            elif st.session_state.view_mode == "🧠 自動インサイト分析": # この elif ブロックを丸ごと追加
+                if IMPORT_STATUS.get("insight_miner"):
+                    run_insight_analysis()
+                else:
+                    st.error("❌ 自動インサイト分析モジュールがロードされていません。")
             elif st.session_state.view_mode == "📊 ダッシュボード表示":
                 show_dashboard_mode()
             elif st.session_state.view_mode in ["🤖 AI分析", "⚙️ 手動SQL実行"]:
