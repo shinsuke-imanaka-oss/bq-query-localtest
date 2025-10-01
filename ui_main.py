@@ -69,7 +69,7 @@ def execute_main_analysis(user_input: str):
         
         # REQ-A2-03: AIにタグのコンテキストを渡す
         tag_context = {}
-        if 'tag_df' in st.session_state and st.session_state.tag_df is not None:
+        if st.session_state.get("use_tag_analysis", False) and 'tag_df' in st.session_state and st.session_state.tag_df is not None:
             unique_tags = st.session_state.tag_df['tag'].unique().tolist()
             tag_context = {"available_tags": unique_tags}
 
@@ -221,34 +221,64 @@ def show_sql_fix_review_ui():
 # =========================================================================
 # REQ-A1-01, REQ-A2-01: サイドバーにタグフィルター機能を追加
 def show_sidebar_tag_filter():
-    """サイドバーにタグCSVアップロードとフィルターを表示する"""
+    """サイドバーにタグCSVアップロードとフィルターを表示する - 複数ファイル対応版"""
     with st.sidebar.expander("🏷️ タグで絞り込む", expanded=True):
-        uploaded_file = st.file_uploader(
-            "タグCSVをアップロード",
-            type="csv",
-            help="`ad_text`と`tag`列を持つCSVファイルをアップロードしてください。"
-        )
+        st.toggle("タグ分析を有効にする", key="use_tag_analysis", value=False, help="ONにすると、CSVをアップロードしてタグを使った分析ができます。")
 
-        if uploaded_file:
-            # ファイルがアップロードされたら処理を実行
-            tag_df = process_uploaded_csv(uploaded_file)
-            st.session_state.tag_df = tag_df
-        
-        # NFR-01: クリアボタン
-        if st.button("タグ情報をクリア"):
-           st.session_state.tag_df = None
-           st.session_state.selected_tags = []
-           st.rerun()
-
-        # REQ-A2-01: タグDataFrameがあればフィルターを表示
-        if 'tag_df' in st.session_state and st.session_state.tag_df is not None:
-            tag_df = st.session_state.tag_df
-            unique_tags = sorted(tag_df['tag'].unique())
-            st.session_state.selected_tags = st.multiselect(
-                "タグを選択",
-                options=unique_tags,
-                default=st.session_state.get('selected_tags', [])
+        if st.session_state.get("use_tag_analysis", False):
+            # --- ③ 複数ファイルのアップロード ---
+            uploaded_files = st.file_uploader(
+                "タグCSVをアップロード",
+                type="csv",
+                help="`analysis_target_column`, `analyzed_text`, `tag` 列を持つCSVをアップロードしてください。",
+                accept_multiple_files=True # 複数ファイルを許可
             )
+
+            # --- 状態管理の初期化 ---
+            if 'uploaded_tag_files' not in st.session_state:
+                st.session_state.uploaded_tag_files = {}
+
+            if uploaded_files:
+                for file in uploaded_files:
+                    # 各ファイルを処理し、ファイル名をキーとして辞書に保存
+                    df = process_uploaded_csv(file)
+                    if df is not None:
+                        st.session_state.uploaded_tag_files[file.name] = df
+            
+            # --- ③ アップロードされたファイルが1つ以上ある場合のUI ---
+            if st.session_state.uploaded_tag_files:
+                # ドロップダウンで分析に使うファイルを選択
+                file_options = list(st.session_state.uploaded_tag_files.keys())
+                st.selectbox(
+                    "分析に使用するタグファイルを選択",
+                    options=file_options,
+                    key='active_tag_file_name' # 選択されたファイル名を保存
+                )
+
+                # --- ② プレビュー機能 ---
+                with st.expander("アップロード内容のプレビュー"):
+                    active_file_name = st.session_state.get('active_tag_file_name')
+                    if active_file_name and active_file_name in st.session_state.uploaded_tag_files:
+                        st.dataframe(st.session_state.uploaded_tag_files[active_file_name].head())
+
+                # --- フィルター機能 ---
+                active_file_name = st.session_state.get('active_tag_file_name')
+                if active_file_name and active_file_name in st.session_state.uploaded_tag_files:
+                    tag_df = st.session_state.uploaded_tag_files[active_file_name]
+                    if 'tag' in tag_df.columns:
+                        unique_tags = sorted(tag_df['tag'].dropna().unique())
+                        st.multiselect(
+                            "タグを選択",
+                            options=unique_tags,
+                            key='selected_tags'
+                        )
+
+            # --- クリアボタン ---
+            if st.button("全タグ情報をクリア"):
+                st.session_state.uploaded_tag_files = {}
+                st.session_state.active_tag_file_name = None
+                st.session_state.selected_tags = []
+                st.rerun()
 
 def show_ai_selection():
     st.markdown("### 🤖 AI選択")
@@ -297,17 +327,23 @@ def show_analysis_results():
         
         # REQ-A1-03: タグ情報があれば結合する
         main_df = st.session_state.last_analysis_result
-        tag_df = st.session_state.get("tag_df")
-        
-        # 常に結合を試みる。結合キーがなければ、merge_data_with_tagsが元のdfを返す。
-        display_df = merge_data_with_tags(main_df, tag_df)
-        
-        # REQ-A2-02: タグでフィルタリング
-        selected_tags = st.session_state.get("selected_tags", [])
-        
-        # 'tag'列が結合によって追加されていたらフィルタリングを実行
-        if selected_tags and 'tag' in display_df.columns:
-            display_df = filter_data_by_tags(display_df, selected_tags)
+        display_df = main_df.copy() # コピーを作成して元のデータに影響しないようにする
+
+        # ▼▼▼【修正箇所】選択されたファイルを使ってタグ処理を行う▼▼▼
+        if st.session_state.get("use_tag_analysis", False):
+            active_file_name = st.session_state.get('active_tag_file_name')
+            
+            # アクティブなファイルが選択されている場合のみ処理を実行
+            if active_file_name and active_file_name in st.session_state.uploaded_tag_files:
+                tag_df = st.session_state.uploaded_tag_files[active_file_name]
+                
+                # タグ結合
+                display_df = merge_data_with_tags(display_df, tag_df)
+                
+                # タグフィルター
+                selected_tags = st.session_state.get("selected_tags", [])
+                if selected_tags and 'tag' in display_df.columns:
+                    display_df = filter_data_by_tags(display_df, selected_tags)
 
         st.dataframe(display_df, use_container_width=True)
 
