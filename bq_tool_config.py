@@ -58,7 +58,7 @@ class LookerSettings:
 class AISettings:
     """AI関連設定"""
     gemini_model: str = "gemini-2.0-flash-001"
-    claude_model: str = "claude-3-5-sonnet-20240620"
+    claude_model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 8000
     temperature: float = 0.1
     timeout: int = 60

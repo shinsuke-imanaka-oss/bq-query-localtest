@@ -387,7 +387,7 @@ def setup_claude_client():
             model_name = settings.ai.claude_model
         else:
             api_key = st.secrets.get("CLAUDE_API_KEY") or st.secrets.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-            model_name = "claude-3-5-sonnet-20240620"
+            model_name = "claude-sonnet-4-20250514"
         
         if not api_key:
             st.error("❌ Claude API キーが設定されていません")
@@ -845,74 +845,6 @@ def show_monitoring_dashboard():
             for i, error_info in enumerate(reversed(error_history[-5:])):
                 st.error(f"**エラー #{len(error_history)-i}:** {error_info.get('timestamp')}")
                 st.code(error_info.get('error_message', '詳細不明'), language='text')
-
-def show_comprehensive_report_mode():
-    """統合分析レポートモードのUIを表示する"""
-    st.header("📊 統合分析レポート")
-    st.markdown("複数のAI分析を連携させ、アカウント全体の状況を一つのレポートに統合します。")
-
-    bq_client = st.session_state.get("bq_client")
-    gemini_model = st.session_state.get("gemini_model")
-    claude_client = st.session_state.get("claude_client")
-    claude_model_name = st.session_state.get("claude_model_name")
-
-    # 必要なクライアントが初期化されているか確認
-    if not bq_client:
-        st.error("この機能を利用するには、まずBigQueryに接続してください。")
-        return
-    if not gemini_model and not claude_client:
-         st.error("この機能を利用するには、GeminiまたはClaudeのいずれかに接続してください。")
-         return
-
-    # --- 1. コントロールパネル ---
-    with st.expander("分析設定", expanded=True):
-
-        # 【修正点1】AI選択のUIを追加
-        st.subheader("1. レポート生成AIの選択")
-        model_options = []
-        if gemini_model: model_options.append("Gemini")
-        if claude_client: model_options.append("Claude")
-
-        if not model_options:
-            st.warning("利用可能なAIモデルがありません。サイドバーから接続してください。")
-            # AIが選択できないので、これ以降の処理を中断
-            return
-
-        model_choice = st.selectbox("サマリー生成に使用するAIを選択", options=model_options)
-
-        # 期間設定
-        st.subheader("2. 評価対象とする期間")
-        today = date.today()
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("開始日", value=today - timedelta(days=30))
-        with col2:
-            end_date = st.date_input("終了日", value=today - timedelta(days=1))
-
-        # TODO: その他のコントロール（過去比較、粒度など）をここに追加
-
-    # --- 2. レポート生成ボタン ---
-    if st.button("🚀 最新データで統合分析レポートを生成", type="primary"):
-        # master_analyzer.pyからrun_comprehensive_analysisを呼び出す
-        if IMPORT_STATUS.get("master_analyzer"):
-             run_comprehensive_analysis( # <<< この呼び出しは正しいです
-                bq_client, gemini_model, claude_client, claude_model_name,
-                model_choice, start_date, end_date
-            )
-        else:
-            st.error("❌ 統合分析モジュール(master_analyzer.py)がロードされていません。")
-
-    # --- 3. レポート表示エリア ---
-    if "comprehensive_report" in st.session_state:
-        report_data = st.session_state.comprehensive_report
-
-        st.markdown("---")
-        st.subheader(f"🤖 エグゼクティブサマリー (by {report_data['model_used']})")
-        st.info(report_data["summary"])
-
-        # TODO: タブ形式で詳細表示エリアを実装
-        st.subheader("詳細データ")
-        st.write(report_data["details"])
 
 
 def show_environment_debug_page():

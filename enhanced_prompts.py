@@ -133,7 +133,7 @@ def get_llm_config() -> Dict[str, Any]:
         # フォールバック設定
         return {
             "gemini_model": "gemini-2.0-flash-001",
-            "claude_model": "claude-3-5-sonnet-20240620", 
+            "claude_model": "claude-sonnet-4-20250514", 
             "temperature": 0.3,
             "max_tokens": 4000,
             "timeout": 60
@@ -273,7 +273,7 @@ class EnhancedPrompts:
         )
         
         # Claude モデル固有の調整
-        if self.config["claude_model"] == "claude-3-5-sonnet-20240620":
+        if self.config["claude_model"] == "claude-sonnet-4-20250514":
             enhanced_prompt += "\n\n## 分析品質要求\n- 統計的な根拠を明示\n- 実践的なアクションプランを提供\n- ROI・効果測定の観点を含める"
         
         return enhanced_prompt

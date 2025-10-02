@@ -1,9 +1,10 @@
-# performance_analyzer.py
+# performance_analyzer.py - 日付範囲対応版
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from typing import Dict, Any, Optional
+from datetime import date
 
 # --- 依存モジュールの安全なインポート ---
 try:
@@ -12,16 +13,36 @@ except ImportError:
     st.error("enhanced_prompts.py が見つかりません。")
     def get_industry_benchmarks(): return {}
 
-# --- データ取得・加工 ---
+# --- データ取得・加工（日付範囲対応版） ---
 
-def get_performance_data(bq_client) -> Optional[pd.DataFrame]:
-    """メディア別のパフォーマンスデータをBigQueryから取得し、KPIも計算する (CTE版)"""
+def get_performance_data(bq_client, start_date: date = None, end_date: date = None) -> Optional[pd.DataFrame]:
+    """
+    メディア別のパフォーマンスデータをBigQueryから取得し、KPIも計算する（日付範囲対応版）
+    
+    Args:
+        bq_client: BigQueryクライアント
+        start_date: 開始日（Noneの場合は全期間）
+        end_date: 終了日（Noneの場合は全期間）
+    
+    Returns:
+        パフォーマンスデータのDataFrame
+    """
     if not bq_client:
         st.warning("BigQueryクライアントが初期化されていません。")
         return None
 
+    # WHERE句の構築
+    where_clauses = ["ServiceNameJA_Media IS NOT NULL"]
+    
+    if start_date:
+        where_clauses.append(f"Date >= '{start_date}'")
+    if end_date:
+        where_clauses.append(f"Date <= '{end_date}'")
+    
+    where_clause = "WHERE " + " AND ".join(where_clauses)
+
     # CTE(WITH句)を使い、集計を2段階に分けることでエラーを回避する
-    query = """
+    query = f"""
     WITH MediaSummary AS (
         -- ステップ1: まずはメディア別に必要な指標を単純に合計する
         SELECT
@@ -31,7 +52,7 @@ def get_performance_data(bq_client) -> Optional[pd.DataFrame]:
             SUM(Clicks) AS clicks,
             SUM(Conversions) AS conversions
         FROM `vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign`
-        WHERE ServiceNameJA_Media IS NOT NULL
+        {where_clause}
         GROUP BY ServiceNameJA_Media
     )
     -- ステップ2: ステップ1で集計した値を使って、最終的なKPIを計算する
@@ -49,6 +70,7 @@ def get_performance_data(bq_client) -> Optional[pd.DataFrame]:
     WHERE impressions > 0 AND clicks > 0 AND conversions > 0
     ORDER BY cost DESC
     """
+    
     try:
         with st.spinner("診断データをBigQueryから取得中..."):
             df = bq_client.query(query).to_dataframe()
@@ -60,10 +82,12 @@ def get_performance_data(bq_client) -> Optional[pd.DataFrame]:
         st.error(f"データ取得エラー: {e}")
         return None
 
+
 def calculate_kpis(df: pd.DataFrame) -> pd.DataFrame:
     """SQLでKPI計算済みのため、この関数はデータをそのまま返すだけで良い"""
     # SQLクエリ内で計算が完了しているため、ここでは何もしない
     return df
+
 
 # --- 診断と評価 ---
 
@@ -126,6 +150,7 @@ def generate_ai_summary(df: pd.DataFrame, gemini_model) -> str:
     except Exception as e:
         return f"AIコメント生成中にエラーが発生: {e}"
 
+
 # --- 可視化 ---
 
 def create_comparison_chart(df: pd.DataFrame):
@@ -176,7 +201,7 @@ def run_performance_diagnosis():
     bq_client = st.session_state.get("bq_client")
     gemini_model = st.session_state.get("gemini_model")
 
-    # 1. データ取得
+    # 1. データ取得（日付範囲なし = 全期間）
     data = get_performance_data(bq_client)
     if data is None:
         return
