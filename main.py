@@ -13,7 +13,7 @@ st.warning(f"🐍 Streamlitが使用中のPython: {sys.executable}")
 import pandas as pd
 import os
 import traceback
-from datetime import datetime as dt, date
+from datetime import datetime as dt, date, timedelta
 from typing import Dict, List, Optional, Any
 import diagnostics
 from error_handler import handle_error_with_ai
@@ -243,6 +243,15 @@ try:
 except ImportError as e:
     print(f"⚠️ strategy_simulator.py インポートエラー: {e}")
     IMPORT_STATUS["strategy_simulator"] = False
+
+#統合分析機能
+try:
+    from master_analyzer import run_comprehensive_analysis
+    IMPORT_STATUS["master_analyzer"] = True
+    print("✅ master_analyzer.py インポート成功")
+except ImportError as e:
+    print(f"⚠️ master_analyzer.py インポートエラー: {e}")
+    IMPORT_STATUS["master_analyzer"] = False
 # =========================================================================
 # セッション状態管理（設定対応版）
 # =========================================================================
@@ -377,7 +386,7 @@ def setup_claude_client():
             model_name = settings.ai.claude_model
         else:
             api_key = st.secrets.get("CLAUDE_API_KEY") or st.secrets.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-            model_name = "claude-3-sonnet-20240229"
+            model_name = "claude-3-5-sonnet-20240620"
         
         if not api_key:
             st.error("❌ Claude API キーが設定されていません")
@@ -836,6 +845,72 @@ def show_monitoring_dashboard():
                 st.error(f"**エラー #{len(error_history)-i}:** {error_info.get('timestamp')}")
                 st.code(error_info.get('error_message', '詳細不明'), language='text')
 
+def show_comprehensive_report_mode():
+    """統合分析レポートモードのUIを表示する"""
+    st.header("📊 統合分析レポート")
+    st.markdown("複数のAI分析を連携させ、アカウント全体の状況を一つのレポートに統合します。")
+
+    bq_client = st.session_state.get("bq_client")
+    gemini_model = st.session_state.get("gemini_model")
+    claude_client = st.session_state.get("claude_client")
+    claude_model_name = st.session_state.get("claude_model_name")
+
+    # 必要なクライアントが初期化されているか確認
+    if not bq_client:
+        st.error("この機能を利用するには、まずBigQueryに接続してください。")
+        return
+    if not gemini_model and not claude_client:
+         st.error("この機能を利用するには、GeminiまたはClaudeのいずれかに接続してください。")
+         return
+
+    # --- 1. コントロールパネル ---
+    with st.expander("分析設定", expanded=True):
+
+        # 【修正点1】AI選択のUIを追加
+        st.subheader("1. レポート生成AIの選択")
+        model_options = []
+        if gemini_model: model_options.append("Gemini")
+        if claude_client: model_options.append("Claude")
+
+        if not model_options:
+            st.warning("利用可能なAIモデルがありません。サイドバーから接続してください。")
+            # AIが選択できないので、これ以降の処理を中断
+            return
+
+        model_choice = st.selectbox("サマリー生成に使用するAIを選択", options=model_options)
+
+        # 期間設定
+        st.subheader("2. 評価対象とする期間")
+        today = date.today()
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("開始日", value=today - timedelta(days=30))
+        with col2:
+            end_date = st.date_input("終了日", value=today - timedelta(days=1))
+
+        # TODO: その他のコントロール（過去比較、粒度など）をここに追加
+
+    # --- 2. レポート生成ボタン ---
+    if st.button("🚀 最新データで統合分析レポートを生成", type="primary"):
+        # 【修正点2】run_comprehensive_analysisにAIの選択とクライアントを渡す
+        run_comprehensive_analysis(
+            bq_client, gemini_model, claude_client, claude_model_name,
+            model_choice, start_date, end_date
+        )
+
+    # --- 3. レポート表示エリア ---
+    if "comprehensive_report" in st.session_state:
+        report_data = st.session_state.comprehensive_report
+
+        st.markdown("---")
+        st.subheader(f"🤖 エグゼクティブサマリー (by {report_data['model_used']})")
+        st.info(report_data["summary"])
+
+        # TODO: タブ形式で詳細表示エリアを実装
+        st.subheader("詳細データ")
+        st.write(report_data["details"])
+
+
 def show_environment_debug_page():
     """
     アプリケーションの実行環境を徹底的に自己診断するためのデバッグページ
@@ -930,7 +1005,7 @@ def main():
         st.header("🎛️ システム制御")
         
         # 表示モード選択
-        view_options = ["💡 戦略提案 & シミュレーション", "📈 パフォーマンス診断", "🔮 予測分析 & 異常検知", "🧠 自動インサイト分析", "📊 ダッシュボード表示", "🤖 AI分析", "⚙️ 手動SQL実行", "🩺 システム診断", "📈 監視ダッシュボード", "🔬 環境デバッグ"]
+        view_options = ["📊 統合分析レポート", "💡 戦略提案 & シミュレーション", "📈 パフォーマンス診断", "🔮 予測分析 & 異常検知", "🧠 自動インサイト分析", "📊 ダッシュボード表示", "🤖 AI分析", "⚙️ 手動SQL実行", "🩺 システム診断", "📈 監視ダッシュボード", "🔬 環境デバッグ"]
         st.session_state.view_mode = st.selectbox(
             "表示モード選択",
             view_options,
@@ -1041,6 +1116,8 @@ def main():
             if st.session_state.get("show_fix_review"):
                 from ui_main import show_sql_fix_review_ui
                 show_sql_fix_review_ui()
+            elif st.session_state.view_mode == "📊 統合分析レポート": # このelifブロックを丸ごと追加
+                show_comprehensive_report_mode()
             elif st.session_state.view_mode == "💡 戦略提案 & シミュレーション": # この elif ブロックを丸ごと追加
                 if IMPORT_STATUS.get("strategy_simulator"):
                     run_strategy_simulation()
