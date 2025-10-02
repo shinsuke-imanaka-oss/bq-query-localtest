@@ -42,6 +42,7 @@ def get_forecast_data(df: pd.DataFrame, periods: int) -> Optional[pd.DataFrame]:
         prophet_model.fit(df)
         future_df = prophet_model.make_future_dataframe(periods=periods)
         forecast_result = prophet_model.predict(future_df)
+        # 実績データと予測結果を結合して返す
         results_with_history = pd.merge(forecast_result, df, on='ds', how='left')
         return results_with_history
     except Exception as e:

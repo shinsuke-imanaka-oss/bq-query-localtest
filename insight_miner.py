@@ -3,17 +3,16 @@
 
 import streamlit as st
 import pandas as pd
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 
 # --- 依存モジュールのインポート ---
 try:
-    # 【修正点1】設定管理システムをインポート
     from bq_tool_config import settings
     SETTINGS_AVAILABLE = True
 except ImportError:
     st.error("設定ファイル(bq_tool_config.py)が見つかりません。")
     SETTINGS_AVAILABLE = False
-    settings = None # フォールバック
+    settings = None
 
 # --- 分析ロジック ---
 

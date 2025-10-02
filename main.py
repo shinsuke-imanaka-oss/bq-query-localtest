@@ -84,7 +84,8 @@ IMPORT_STATUS = {
     "analysis_controller": False,
     "error_handler": False,
     "data_quality_checker": False,
-    "looker_handler": False
+    "looker_handler": False,
+    "master_analyzer": False
 }
 
 # =========================================================================
@@ -246,7 +247,7 @@ except ImportError as e:
 
 #統合分析機能
 try:
-    from master_analyzer import run_comprehensive_analysis
+    from master_analyzer import show_comprehensive_report_mode
     IMPORT_STATUS["master_analyzer"] = True
     print("✅ master_analyzer.py インポート成功")
 except ImportError as e:
@@ -892,11 +893,14 @@ def show_comprehensive_report_mode():
 
     # --- 2. レポート生成ボタン ---
     if st.button("🚀 最新データで統合分析レポートを生成", type="primary"):
-        # 【修正点2】run_comprehensive_analysisにAIの選択とクライアントを渡す
-        run_comprehensive_analysis(
-            bq_client, gemini_model, claude_client, claude_model_name,
-            model_choice, start_date, end_date
-        )
+        # master_analyzer.pyからrun_comprehensive_analysisを呼び出す
+        if IMPORT_STATUS.get("master_analyzer"):
+             run_comprehensive_analysis( # <<< この呼び出しは正しいです
+                bq_client, gemini_model, claude_client, claude_model_name,
+                model_choice, start_date, end_date
+            )
+        else:
+            st.error("❌ 統合分析モジュール(master_analyzer.py)がロードされていません。")
 
     # --- 3. レポート表示エリア ---
     if "comprehensive_report" in st.session_state:
@@ -1116,9 +1120,12 @@ def main():
             if st.session_state.get("show_fix_review"):
                 from ui_main import show_sql_fix_review_ui
                 show_sql_fix_review_ui()
-            elif st.session_state.view_mode == "📊 統合分析レポート": # このelifブロックを丸ごと追加
-                show_comprehensive_report_mode()
-            elif st.session_state.view_mode == "💡 戦略提案 & シミュレーション": # この elif ブロックを丸ごと追加
+            elif st.session_state.view_mode == "📊 統合分析レポート":
+                if IMPORT_STATUS.get("master_analyzer"):
+                    show_comprehensive_report_mode() # 引数なしで呼び出す
+                else:
+                    st.error("❌ 統合分析モジュールがロードされていません。")
+            elif st.session_state.view_mode == "💡 戦略提案 & シミュレーション":
                 if IMPORT_STATUS.get("strategy_simulator"):
                     run_strategy_simulation()
                 else:
