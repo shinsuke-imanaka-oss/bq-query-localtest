@@ -196,7 +196,7 @@ def gather_all_analyses(bq_client, start_date, end_date):
     if INSIGHT_AVAILABLE:
         try:
             results["insights"] = find_key_drivers_safe(
-                bq_client, start_date, end_date
+                bq_client, target_kpi_en='cvr', start_date = start_date, end_date = end_date
             )
         except Exception as e:
             print(f"自動インサイトエラー: {e}")

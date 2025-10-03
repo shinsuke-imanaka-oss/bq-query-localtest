@@ -31,7 +31,7 @@ def gather_analysis_context(bq_client) -> Optional[Dict]:
         evaluated_df = evaluate_performance(kpi_df)
 
         # B-3: 要因分析の実行 (CVRをターゲットとする)
-        drivers_df = find_key_drivers_safe(bq_client, target_kpi_en='cvr')
+        drivers_df = find_key_drivers_safe(bq_client)
         if drivers_df is None: return {"error": "要因分析データを取得できませんでした。"}
 
         # 最も影響の大きい要因を抽出
