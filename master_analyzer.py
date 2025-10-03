@@ -155,127 +155,56 @@ def calculate_dataframe_differences(current_df, compare_df):
     
     return result
 
-def gather_all_analyses(bq_client, start_date, end_date, comparison_period=None):
+def gather_all_analyses(bq_client, start_date, end_date):
     """
-    すべての分析を実行し、統合レポート用のデータを収集
+    指定期間の分析データを取得（比較機能なし）
     
     Args:
         bq_client: BigQueryクライアント
         start_date: 開始日
         end_date: 終了日
-        comparison_period: 比較期間 ("1week", "1month", "1year")
     
     Returns:
         分析結果を含む辞書
     """
-    # 現在期間のデータ取得
-    current_results = {}
+    results = {}
     
     # パフォーマンス診断
     if PERF_AVAILABLE:
         try:
             perf_data = get_performance_data(bq_client, start_date, end_date)
-            current_results["performance"] = calculate_kpis(perf_data)
+            results["performance"] = calculate_kpis(perf_data)
         except Exception as e:
             print(f"パフォーマンス診断エラー: {e}")
-            current_results["performance"] = {"error": str(e)}
+            results["performance"] = {"error": str(e)}
     else:
-        current_results["performance"] = {"error": "performance_analyzer not available"}
+        results["performance"] = {"error": "performance_analyzer not available"}
     
     # 予測分析
     if FORECAST_AVAILABLE:
         try:
-            current_results["prediction"] = get_forecast_data(
+            results["prediction"] = get_forecast_data(
                 bq_client, start_date, end_date
             )
         except Exception as e:
             print(f"予測分析エラー: {e}")
-            current_results["prediction"] = {"error": str(e)}
+            results["prediction"] = {"error": str(e)}
     else:
-        current_results["prediction"] = {"error": "forecast_analyzer not available"}
+        results["prediction"] = {"error": "forecast_analyzer not available"}
     
     # 自動インサイト
     if INSIGHT_AVAILABLE:
         try:
-            current_results["insights"] = find_key_drivers_safe(
+            results["insights"] = find_key_drivers_safe(
                 bq_client, start_date, end_date
             )
         except Exception as e:
             print(f"自動インサイトエラー: {e}")
-            current_results["insights"] = {"error": str(e)}
+            results["insights"] = {"error": str(e)}
     else:
-        current_results["insights"] = {"error": "insight_miner not available"}
+        results["insights"] = {"error": "insight_miner not available"}
     
-    # 【時間比較機能】比較期間のデータ取得
-    if comparison_period and COMPARISON_UTILS_AVAILABLE:
-        # 比較期間の計算
-        if comparison_period == "1week":
-            delta = timedelta(days=7)
-        elif comparison_period == "1month":
-            delta = timedelta(days=30)
-        elif comparison_period == "1year":
-            delta = timedelta(days=365)
-        else:
-            delta = timedelta(days=30)
-        
-        compare_start = start_date - delta
-        compare_end = end_date - delta
-        
-        # 比較期間のデータ取得
-        comparison_results = {}
-        
-        # パフォーマンス診断 (比較期間)
-        if PERF_AVAILABLE:
-            try:
-                perf_data_compare = get_performance_data(
-                    bq_client, compare_start, compare_end
-                )
-                comparison_results["performance"] = calculate_kpis(perf_data_compare)
-            except Exception as e:
-                print(f"比較期間パフォーマンス診断エラー: {e}")
-                comparison_results["performance"] = {"error": str(e)}
-        else:
-            comparison_results["performance"] = {"error": "performance_analyzer not available"}
-        
-        # 予測分析 (比較期間)
-        if FORECAST_AVAILABLE:
-            try:
-                comparison_results["prediction"] = get_forecast_data(
-                    bq_client, compare_start, compare_end
-                )
-            except Exception as e:
-                print(f"比較期間予測分析エラー: {e}")
-                comparison_results["prediction"] = {"error": str(e)}
-        else:
-            comparison_results["prediction"] = {"error": "forecast_analyzer not available"}
-        
-        # 自動インサイト (比較期間)
-        if INSIGHT_AVAILABLE:
-            try:
-                comparison_results["insights"] = find_key_drivers_safe(
-                    bq_client, compare_start, compare_end
-                )
-            except Exception as e:
-                print(f"比較期間自動インサイトエラー: {e}")
-                comparison_results["insights"] = {"error": str(e)}
-        else:
-            comparison_results["insights"] = {"error": "insight_miner not available"}
-        
-        # 差分計算
-        differences = calculate_differences(current_results, comparison_results)
-        
-        return {
-            "current": current_results,
-            "comparison": comparison_results,
-            "differences": differences,
-            "comparison_period": comparison_period,
-            "compare_start_date": compare_start.strftime("%Y-%m-%d"),
-            "compare_end_date": compare_end.strftime("%Y-%m-%d")
-        }
-    
-    # 比較なしの場合は現在データのみ返す
-    return {"current": current_results}
-
+    return results
 
 def gather_all_analyses_with_comparison(
     bq_client,

@@ -106,25 +106,38 @@ def find_key_drivers_safe(
 
     # 設定オブジェクトから動的にテーブル名を生成
     ANALYSIS_MAP = {
-        "デバイス": (settings.bigquery.get_full_table_name("campaign_device"), "DeviceName"),
+        "デバイス": (settings.bigquery.get_full_table_name("campaign_device"), "DeviceCategory"),
         "メディア": (settings.bigquery.get_full_table_name("campaign"), "ServiceNameJA_Media"),
         "キャンペーン": (settings.bigquery.get_full_table_name("campaign"), "CampaignName"),
+        "年齢": (settings.bigquery.get_full_table_name("age_group"), "AgeRange"),
+        "性別": (settings.bigquery.get_full_table_name("gender"), "UnifiedGenderJA"),
+        "地域": (settings.bigquery.get_full_table_name("area"), "RegionJA"),
+        "時間": (settings.bigquery.get_full_table_name("hourly"), "HourOfDay"),
+        "キーワード": (settings.bigquery.get_full_table_name("keyword"), "Keyword"),
+        "広告グループ": (settings.bigquery.get_full_table_name("ad_group"), "AdGroupName_unified"),
+        "検索ワード": (settings.bigquery.get_full_table_name("search_query"), "Query"),
+        "広告": (settings.bigquery.get_full_table_name("ad"), "Headline")
     }
 
     all_results = []
     
     for dimension_jp, (table_name, dimension_en) in ANALYSIS_MAP.items():
-        result = analyze_dimension(
-            bq_client, 
-            dimension_jp, 
-            table_name, 
-            dimension_en, 
-            target_kpi_en,
-            start_date,
-            end_date
-        )
-        if result is not None:
-            all_results.append(result)
+        try:  # ← ここを追加
+            result = analyze_dimension(
+                bq_client, 
+                dimension_jp, 
+                table_name, 
+                dimension_en, 
+                'cvr',  # デフォルトのKPI
+                start_date,
+                end_date
+            )
+            if result is not None and not result.empty:  # ← 空チェック追加
+                all_results.append(result)
+        except Exception as e:  # ← ここを追加
+            print(f"分析エラー ({dimension_jp}): {e}")
+            # エラーが出ても続行
+            continue
 
     if not all_results:
         st.warning("要因分析のデータが取得できませんでした。")
