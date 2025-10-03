@@ -228,7 +228,31 @@ class EnhancedPrompts:
             {context}
             """
         }
-    
+
+    def generate_integrated_report_prompt(analysis_results):
+        prompt = f"""
+    以下の統合分析結果に基づいて、包括的なレポートを作成してください。
+
+    ## 現在期間のデータ
+    {analysis_results.get('current', {})}
+    """
+        
+        # 【新規追加】比較データがある場合
+        if 'comparison' in analysis_results and 'differences' in analysis_results:
+            prompt += f"""
+
+    ## 過去比較データ ({analysis_results.get('comparison_period', '1month')})
+    ### 変化のサマリー
+    {analysis_results['differences']}
+
+    ### 比較期間のデータ
+    {analysis_results['comparison']}
+
+    **重要**: 現在期間と比較期間の違いを明確に説明し、変化率や改善・悪化の傾向を示してください。
+    """
+        
+        return prompt
+
     def generate_sql_plan_prompt(self, user_input: str, context: Dict[str, Any] = None) -> str:
         """【新】SQLの「設計書」をAIに生成させるためのプロンプトを生成する"""
         if context is None:

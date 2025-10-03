@@ -46,63 +46,235 @@ except ImportError:
 # 📊 データ収集関数（過去比較対応版）
 # ============================================================
 
-def gather_all_analyses(bq_client, start_date, end_date) -> Dict[str, Any]:
+def calculate_differences(current_data, comparison_data):
     """
-    各分析モジュールからデータを収集（単一期間）
+    現在期間と比較期間の差分を計算
+    
+    Args:
+        current_data: 現在期間の分析結果
+        comparison_data: 比較期間の分析結果
+    
+    Returns:
+        差分データ (パーセンテージと絶対値)
+    """
+    differences = {}
+    
+    # 各分析カテゴリーごとに差分を計算
+    for category in current_data.keys():
+        if category not in comparison_data:
+            continue
+        
+        current_val = current_data[category]
+        compare_val = comparison_data[category]
+        
+        # エラーがある場合はスキップ
+        if isinstance(current_val, dict) and "error" in current_val:
+            continue
+        if isinstance(compare_val, dict) and "error" in compare_val:
+            continue
+        
+        differences[category] = {}
+        
+        # DataFrameの場合
+        if isinstance(current_val, pd.DataFrame) and isinstance(compare_val, pd.DataFrame):
+            differences[category] = calculate_dataframe_differences(
+                current_val, compare_val
+            )
+        
+        # 辞書の場合
+        elif isinstance(current_val, dict) and isinstance(compare_val, dict):
+            differences[category] = calculate_dict_differences(
+                current_val, compare_val
+            )
+        
+        # 数値の場合
+        elif isinstance(current_val, (int, float)) and isinstance(compare_val, (int, float)):
+            differences[category] = calculate_numeric_difference(
+                current_val, compare_val
+            )
+    
+    return differences
+
+
+def calculate_numeric_difference(current_val, compare_val):
+    """数値の差分計算"""
+    if compare_val != 0:
+        change_rate = ((current_val - compare_val) / compare_val) * 100
+    else:
+        change_rate = 0 if current_val == 0 else float('inf')
+    
+    return {
+        "current": current_val,
+        "comparison": compare_val,
+        "change": current_val - compare_val,
+        "change_rate": round(change_rate, 2)
+    }
+
+
+def calculate_dict_differences(current_dict, compare_dict):
+    """辞書の差分計算"""
+    result = {}
+    
+    for key in current_dict.keys():
+        if key not in compare_dict:
+            continue
+        
+        current_val = current_dict[key]
+        compare_val = compare_dict[key]
+        
+        if isinstance(current_val, (int, float)) and isinstance(compare_val, (int, float)):
+            result[key] = calculate_numeric_difference(current_val, compare_val)
+        elif isinstance(current_val, dict) and isinstance(compare_val, dict):
+            result[key] = calculate_dict_differences(current_val, compare_val)
+    
+    return result
+
+
+def calculate_dataframe_differences(current_df, compare_df):
+    """DataFrameの差分計算"""
+    result = {
+        "summary": {},
+        "row_count_change": {
+            "current": len(current_df),
+            "comparison": len(compare_df),
+            "change": len(current_df) - len(compare_df)
+        }
+    }
+    
+    # 数値カラムのみ抽出
+    numeric_cols = current_df.select_dtypes(include=['number']).columns
+    
+    for col in numeric_cols:
+        if col in compare_df.columns:
+            current_sum = current_df[col].sum()
+            compare_sum = compare_df[col].sum()
+            
+            result["summary"][col] = calculate_numeric_difference(
+                current_sum, compare_sum
+            )
+    
+    return result
+
+def gather_all_analyses(bq_client, start_date, end_date, comparison_period=None):
+    """
+    すべての分析を実行し、統合レポート用のデータを収集
     
     Args:
         bq_client: BigQueryクライアント
         start_date: 開始日
         end_date: 終了日
+        comparison_period: 比較期間 ("1week", "1month", "1year")
     
     Returns:
         分析結果を含む辞書
     """
-    results = {
-        "performance": None,
-        "forecast": None,
-        "drivers": None
-    }
+    # 現在期間のデータ取得
+    current_results = {}
     
-    # 1. パフォーマンス診断
+    # パフォーマンス診断
     if PERF_AVAILABLE:
         try:
-            perf_data = get_performance_data(bq_client)
-            if perf_data is not None and not perf_data.empty:
-                results["performance"] = calculate_kpis(perf_data)
+            perf_data = get_performance_data(bq_client, start_date, end_date)
+            current_results["performance"] = calculate_kpis(perf_data)
         except Exception as e:
-            st.warning(f"パフォーマンス診断でエラー: {e}")
+            print(f"パフォーマンス診断エラー: {e}")
+            current_results["performance"] = {"error": str(e)}
+    else:
+        current_results["performance"] = {"error": "performance_analyzer not available"}
     
-    # 2. 予測分析
+    # 予測分析
     if FORECAST_AVAILABLE:
         try:
-            daily_data = get_daily_kpi_data(
-                bq_client, 
-                target_kpi='Conversions',
-                start_date=start_date, 
-                end_date=end_date
+            current_results["prediction"] = get_forecast_data(
+                bq_client, start_date, end_date
             )
-            if daily_data is not None and not daily_data.empty:
-                forecast_df = get_forecast_data(daily_data, periods=30)
-                if forecast_df is not None:
-                    results["forecast"] = forecast_df
         except Exception as e:
-            st.warning(f"予測分析でエラー: {e}")
+            print(f"予測分析エラー: {e}")
+            current_results["prediction"] = {"error": str(e)}
+    else:
+        current_results["prediction"] = {"error": "forecast_analyzer not available"}
     
-    # 3. 要因分析
+    # 自動インサイト
     if INSIGHT_AVAILABLE:
         try:
-            drivers_df = find_key_drivers_safe(bq_client, target_kpi_en='cvr')
-            if drivers_df is not None:
-                results["drivers"] = drivers_df
+            current_results["insights"] = find_key_drivers_safe(
+                bq_client, start_date, end_date
+            )
         except Exception as e:
-            st.warning(f"要因分析でエラー: {e}")
+            print(f"自動インサイトエラー: {e}")
+            current_results["insights"] = {"error": str(e)}
+    else:
+        current_results["insights"] = {"error": "insight_miner not available"}
     
-    # 少なくとも1つのデータがあればOK
-    if all(v is None for v in results.values()):
-        return {"error": "すべての分析モジュールでデータ取得に失敗しました"}
+    # 【時間比較機能】比較期間のデータ取得
+    if comparison_period and COMPARISON_UTILS_AVAILABLE:
+        # 比較期間の計算
+        if comparison_period == "1week":
+            delta = timedelta(days=7)
+        elif comparison_period == "1month":
+            delta = timedelta(days=30)
+        elif comparison_period == "1year":
+            delta = timedelta(days=365)
+        else:
+            delta = timedelta(days=30)
+        
+        compare_start = start_date - delta
+        compare_end = end_date - delta
+        
+        # 比較期間のデータ取得
+        comparison_results = {}
+        
+        # パフォーマンス診断 (比較期間)
+        if PERF_AVAILABLE:
+            try:
+                perf_data_compare = get_performance_data(
+                    bq_client, compare_start, compare_end
+                )
+                comparison_results["performance"] = calculate_kpis(perf_data_compare)
+            except Exception as e:
+                print(f"比較期間パフォーマンス診断エラー: {e}")
+                comparison_results["performance"] = {"error": str(e)}
+        else:
+            comparison_results["performance"] = {"error": "performance_analyzer not available"}
+        
+        # 予測分析 (比較期間)
+        if FORECAST_AVAILABLE:
+            try:
+                comparison_results["prediction"] = get_forecast_data(
+                    bq_client, compare_start, compare_end
+                )
+            except Exception as e:
+                print(f"比較期間予測分析エラー: {e}")
+                comparison_results["prediction"] = {"error": str(e)}
+        else:
+            comparison_results["prediction"] = {"error": "forecast_analyzer not available"}
+        
+        # 自動インサイト (比較期間)
+        if INSIGHT_AVAILABLE:
+            try:
+                comparison_results["insights"] = find_key_drivers_safe(
+                    bq_client, compare_start, compare_end
+                )
+            except Exception as e:
+                print(f"比較期間自動インサイトエラー: {e}")
+                comparison_results["insights"] = {"error": str(e)}
+        else:
+            comparison_results["insights"] = {"error": "insight_miner not available"}
+        
+        # 差分計算
+        differences = calculate_differences(current_results, comparison_results)
+        
+        return {
+            "current": current_results,
+            "comparison": comparison_results,
+            "differences": differences,
+            "comparison_period": comparison_period,
+            "compare_start_date": compare_start.strftime("%Y-%m-%d"),
+            "compare_end_date": compare_end.strftime("%Y-%m-%d")
+        }
     
-    return results
+    # 比較なしの場合は現在データのみ返す
+    return {"current": current_results}
 
 
 def gather_all_analyses_with_comparison(
