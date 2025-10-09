@@ -253,6 +253,26 @@ try:
 except ImportError as e:
     print(f"⚠️ master_analyzer.py インポートエラー: {e}")
     IMPORT_STATUS["master_analyzer"] = False
+
+# =========================================================================
+# 【追加】週次・月次サマリー機能のインポート
+# =========================================================================
+
+# 既存のインポートセクションに以下を追加
+try:
+    from targets_manager import TargetsManager
+    from achievement_analyzer import AchievementAnalyzer
+    from summary_report_generator import SummaryReportGenerator
+    from ui_summary import SummaryUI
+    from datetime import datetime, date
+    SUMMARY_AVAILABLE = True
+except ImportError as e:
+    SUMMARY_AVAILABLE = False
+    print(f"⚠️ サマリー機能のインポート失敗: {e}")
+
+# IMPORT_STATUS辞書に追加
+IMPORT_STATUS["summary_system"] = SUMMARY_AVAILABLE
+
 # =========================================================================
 # セッション状態管理（設定対応版）
 # =========================================================================
@@ -464,6 +484,526 @@ Temperature: {settings.ai.temperature}
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 設定再読み込みエラー: {e}")
+
+# =========================================================================
+# 【追加】週次・月次サマリー表示モード
+# =========================================================================
+
+def show_summary_mode():
+    """週次・月次サマリー表示モード"""
+    st.header("📅 週次・月次サマリーレポート")
+    
+    # 機能が利用可能かチェック
+    if not SUMMARY_AVAILABLE:
+        st.error("❌ サマリー機能が利用できません")
+        st.info("以下のファイルが正しく配置されているか確認してください:")
+        st.code("""
+- targets_manager.py
+- achievement_analyzer.py
+- summary_report_generator.py
+- ui_summary.py
+        """)
+        return
+    
+    # BigQueryクライアントの確認
+    bq_client = st.session_state.get('bq_client')
+    if not bq_client:
+        st.warning("⚠️ BigQueryに接続してください")
+        if st.button("🔄 BigQuery接続", type="primary"):
+            try:
+                with st.spinner("BigQuery接続中..."):
+                    from main import setup_bigquery_client
+                    bq_client = setup_bigquery_client()
+                    if bq_client:
+                        st.session_state.bq_client = bq_client
+                        st.rerun()
+            except Exception as e:
+                st.error(f"接続エラー: {e}")
+        return
+    
+    # UIインスタンス作成
+    ui = SummaryUI()
+    targets_manager = TargetsManager()
+    
+    # サイドバーでの設定
+    config = ui.render_sidebar()
+    
+    # 対象年月の取得
+    year_month = config["period"]["start_date"].strftime("%Y-%m")
+    
+    # 目標設定状態の表示
+    targets = targets_manager.get_targets(year_month)
+    ui.display_targets_summary(targets, year_month)
+    
+    # メインエリア
+    st.markdown("---")
+    
+    # 目標設定モーダル
+    if config["targets"] == "open_targets_modal":
+        st.subheader("⚙️ 目標・予算設定")
+        
+        saved = ui.render_targets_modal(targets_manager)
+        
+        if saved:
+            st.success("✅ 目標を保存しました")
+            # 3秒後に自動リロード
+            import time
+            time.sleep(2)
+            st.rerun()
+        
+        st.markdown("---")
+        st.info("👆 目標設定後、サイドバーの「🚀 レポート生成」ボタンを押してください")
+        return
+    
+    # レポート生成ボタンが押された場合
+    if config["generate"]:
+        try:
+            # レポート生成
+            with st.spinner("📊 レポートを生成中..."):
+                # AIクライアントの取得
+                gemini_client = st.session_state.get('gemini_model')
+                claude_client = st.session_state.get('claude_client')
+                
+                # テーブルIDの構築
+                if SETTINGS_AVAILABLE and settings:
+                    table_id = f"{settings.bigquery.project_id}.{settings.bigquery.dataset}.LookerStudio_report_campaign"
+                else:
+                    table_id = "vorn-digi-mktg-poc-635a.toki_air.LookerStudio_report_campaign"
+                
+                # ジェネレーター作成
+                generator = SummaryReportGenerator(
+                    bq_client=bq_client,
+                    gemini_client=gemini_client,
+                    claude_client=claude_client
+                )
+                
+                # レポート生成
+                report = generator.generate_report(
+                    start_date=config["period"]["start_date"],
+                    end_date=config["period"]["end_date"],
+                    comparison_mode=config["comparison"]["mode"],
+                    table_id=table_id
+                )
+                
+                if not report:
+                    st.error("❌ レポートの生成に失敗しました")
+                    return
+                
+                # レポート表示
+                display_summary_report(report, config)
+                
+        except Exception as e:
+            st.error(f"❌ エラーが発生しました: {e}")
+            
+            # デバッグ情報
+            if SETTINGS_AVAILABLE and settings and settings.app.debug_mode:
+                st.exception(e)
+    
+    else:
+        # 初期表示
+        st.info("👈 サイドバーで期間を選択し、「🚀 レポート生成」ボタンを押してください")
+        
+        # 説明
+        with st.expander("📖 週次・月次サマリー機能について", expanded=True):
+            st.markdown("""
+            ### 機能概要
+            
+            定期レポート作成を自動化し、指定した期間のパフォーマンスサマリーをワンクリックで生成できます。
+            
+            ### 生成されるレポート
+            
+            1. **📝 エグゼクティブサマリー** - AI生成の要約
+            2. **🎯 目標達成状況** - 予算消化率、KPI達成率
+            3. **📊 主要KPI** - Cost, CPA, CVR, CTR等
+            4. **📈 期間トレンド** - 日次推移グラフ
+            5. **⭐ ハイライト** - 最高/最低パフォーマンス
+            
+            ### 使い方
+            
+            1. サイドバーで**期間を選択**（今週/先週/今月/先月等）
+            2. 必要に応じて**目標・予算を設定**
+            3. **比較設定**で前期間との比較を有効化
+            4. 「🚀 レポート生成」ボタンをクリック
+            
+            ### 目標設定について
+            
+            目標を設定しなくてもレポートは生成できますが、設定すると以下の情報が追加されます：
+            - 予算消化ペース（アンダー/オン/オーバー）
+            - KPI達成率
+            - 目標との差異分析
+            """)
+
+
+def display_summary_report(report: Dict[str, Any], config: Dict[str, Any]):
+    """
+    生成されたレポートを表示（Phase 2対応版）
+    
+    Args:
+        report: レポートデータ
+        config: UI設定
+    """
+    from datetime import datetime
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import pandas as pd
+    
+    # ヘッダー
+    st.success("✅ レポートを生成しました")
+    
+    period_info = report["period"]
+    st.markdown(f"""
+    **期間**: {period_info['start_date'].strftime('%Y/%m/%d')} - {period_info['end_date'].strftime('%Y/%m/%d')}  
+    **生成日時**: {datetime.now().strftime('%Y/%m/%d %H:%M')}
+    """)
+    
+    st.markdown("---")
+    
+    # セクション1: エグゼクティブサマリー
+    st.subheader("🤖 エグゼクティブサマリー")
+    
+    if report.get("section_1_executive_summary"):
+        st.markdown(report["section_1_executive_summary"])
+    else:
+        st.info("エグゼクティブサマリーを生成できませんでした")
+    
+    st.markdown("---")
+    
+    # セクション2: 目標達成状況
+    st.subheader("🎯 目標達成状況")
+    
+    achievement = report["section_2_achievement"]
+    
+    # 予算消化ペース
+    st.markdown("#### 💰 予算消化ペース")
+    
+    budget_pacing = achievement["budget_pacing"]
+    
+    if budget_pacing["has_target"]:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(
+                "実コスト",
+                f"¥{budget_pacing['actual_cost']:,.0f}",
+                f"目標: ¥{budget_pacing['target_budget']:,.0f}"
+            )
+        
+        with col2:
+            st.metric(
+                "消化率",
+                f"{budget_pacing['progress_rate']:.1%}",
+                f"期待: {budget_pacing['expected_progress_rate']:.1%}"
+            )
+        
+        with col3:
+            status_icon = {
+                "under": "🟢",
+                "on_track": "🟡",
+                "over": "🔴"
+            }.get(budget_pacing["pace_status"], "⚪")
+            
+            st.metric(
+                "ペース判定",
+                f"{status_icon} {budget_pacing['pace_status_text']}"
+            )
+        
+        # 詳細情報
+        with st.expander("📊 詳細情報"):
+            st.write(f"日次平均コスト: ¥{budget_pacing['daily_average']:,.0f}")
+            st.write(f"月末予測: ¥{budget_pacing['projected_month_end']:,.0f}")
+            st.write(f"残予算: ¥{budget_pacing['remaining_budget']:,.0f}")
+            st.write(f"残日数: {budget_pacing['days_remaining']}日")
+    
+    else:
+        st.info("⚠️ 目標が設定されていません")
+        st.write(f"実コスト: ¥{budget_pacing['actual_cost']:,.0f}")
+        st.write(f"日次平均: ¥{budget_pacing['daily_average']:,.0f}")
+        st.write(f"月末予測: ¥{budget_pacing['projected_month_end']:,.0f}")
+    
+    # KPI達成率
+    st.markdown("#### 📊 KPI達成状況")
+    
+    kpi_achievement = achievement["kpi_achievement"]
+    
+    if kpi_achievement["has_target"]:
+        kpi_cols = st.columns(len(kpi_achievement["kpis"]))
+        
+        for idx, (kpi_name, kpi_data) in enumerate(kpi_achievement["kpis"].items()):
+            with kpi_cols[idx]:
+                # メトリクス名の整形
+                display_name = {
+                    "conversions": "CV数",
+                    "cpa": "CPA",
+                    "cvr": "CVR",
+                    "ctr": "CTR"
+                }.get(kpi_name, kpi_name.upper())
+                
+                # 値のフォーマット
+                if kpi_name in ["cvr", "ctr"]:
+                    actual_display = f"{kpi_data['actual']:.2%}"
+                    target_display = f"{kpi_data['target']:.2%}"
+                elif kpi_name in ["cpa", "conversions"]:
+                    actual_display = f"{kpi_data['actual']:,.0f}"
+                    target_display = f"{kpi_data['target']:,.0f}"
+                else:
+                    actual_display = f"{kpi_data['actual']}"
+                    target_display = f"{kpi_data['target']}"
+                
+                st.metric(
+                    display_name,
+                    actual_display,
+                    f"目標: {target_display}"
+                )
+                st.write(f"達成率: {kpi_data['status_text']}")
+    
+    else:
+        st.info("⚠️ KPI目標が設定されていません")
+    
+    st.markdown("---")
+    
+    # セクション3: 主要KPI
+    st.subheader("📊 主要KPI")
+    
+    metrics = report["section_3_kpis"]["metrics"]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("コスト", f"¥{metrics['cost']:,.0f}")
+    
+    with col2:
+        st.metric("CV数", f"{metrics['conversions']:,.0f}件")
+    
+    with col3:
+        st.metric("CPA", f"¥{metrics['cpa']:,.0f}")
+    
+    with col4:
+        st.metric("CVR", f"{metrics['cvr']:.2%}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Imp", f"{metrics['impressions']:,.0f}")
+    
+    with col2:
+        st.metric("Clicks", f"{metrics['clicks']:,.0f}")
+    
+    with col3:
+        st.metric("CTR", f"{metrics['ctr']:.2%}")
+    
+    with col4:
+        st.metric("CPC", f"¥{metrics['cpc']:,.0f}")
+    
+    # KPI洞察を表示（Phase 2）
+    if report.get("kpi_insights"):
+        with st.expander("💡 KPI分析", expanded=True):
+            st.markdown(report["kpi_insights"])
+    
+    # 前期間比較（ある場合）
+    if "comparison" in report:
+        st.markdown("#### 📈 前期間比較")
+        
+        comparison = report["comparison"]
+        
+        if comparison["has_comparison"]:
+            comp_data = comparison["comparisons"]
+            
+            comp_cols = st.columns(5)
+            
+            for idx, metric in enumerate(["cost", "conversions", "cpa", "cvr", "ctr"]):
+                if metric in comp_data:
+                    data = comp_data[metric]
+                    
+                    with comp_cols[idx]:
+                        display_name = {
+                            "cost": "コスト",
+                            "conversions": "CV数",
+                            "cpa": "CPA",
+                            "cvr": "CVR",
+                            "ctr": "CTR"
+                        }.get(metric, metric)
+                        
+                        if data["change_rate"] is not None:
+                            st.write(f"**{display_name}**")
+                            st.write(data["trend_text"])
+                        else:
+                            st.write(f"**{display_name}**")
+                            st.write("比較不可")
+    
+    st.markdown("---")
+    
+    # セクション4: 期間トレンド
+    st.subheader("📈 期間トレンド")
+    
+    trend_data = report["section_4_trends"]["daily_data"]
+    
+    if trend_data:
+        df_trend = pd.DataFrame(trend_data)
+        df_trend['date'] = pd.to_datetime(df_trend['date'])
+        
+        # 2行のサブプロット
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=("コスト推移", "CV数推移", "CPA推移", "CVR推移")
+        )
+        
+        # コスト
+        fig.add_trace(
+            go.Scatter(x=df_trend['date'], y=df_trend['cost'], name="コスト", line=dict(color='blue')),
+            row=1, col=1
+        )
+        
+        # CV数
+        fig.add_trace(
+            go.Scatter(x=df_trend['date'], y=df_trend['conversions'], name="CV数", line=dict(color='green')),
+            row=1, col=2
+        )
+        
+        # CPA
+        fig.add_trace(
+            go.Scatter(x=df_trend['date'], y=df_trend['cpa'], name="CPA", line=dict(color='red')),
+            row=2, col=1
+        )
+        
+        # CVR
+        fig.add_trace(
+            go.Scatter(x=df_trend['date'], y=df_trend['cvr'], name="CVR", line=dict(color='purple')),
+            row=2, col=2
+        )
+        
+        fig.update_layout(height=600, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    else:
+        st.info("トレンドデータがありません")
+    
+    st.markdown("---")
+    
+    # セクション5: ハイライト
+    st.subheader("⭐ ハイライト")
+    
+    highlights = report["section_5_highlights"]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏆 最高パフォーマンス")
+        
+        if highlights["best_campaign"]:
+            best = highlights["best_campaign"]
+            st.success(f"**{best['campaign_name']}**")
+            st.write(f"CPA: ¥{best['cpa']:,.0f}")
+            st.write(f"CV数: {best['conversions']:,.0f}件")
+            st.write(f"コスト: ¥{best['cost']:,.0f}")
+        else:
+            st.info("データなし")
+    
+    with col2:
+        st.markdown("#### 📉 要改善")
+        
+        if highlights["worst_campaign"]:
+            worst = highlights["worst_campaign"]
+            st.warning(f"**{worst['campaign_name']}**")
+            st.write(f"CPA: ¥{worst['cpa']:,.0f}")
+            st.write(f"CV数: {worst['conversions']:,.0f}件")
+            st.write(f"コスト: ¥{worst['cost']:,.0f}")
+        else:
+            st.info("データなし")
+    
+    # ハイライト洞察を表示（Phase 2）
+    if report.get("highlights_insights"):
+        st.markdown("---")
+        with st.expander("💡 パフォーマンス差の分析", expanded=True):
+            st.markdown(report["highlights_insights"])
+    
+    # エクスポート機能
+    st.markdown("---")
+    st.subheader("💾 エクスポート")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📄 テキストでダウンロード"):
+            # テキスト形式でレポートを生成
+            report_text = generate_text_report(report)
+            st.download_button(
+                label="💾 ダウンロード",
+                data=report_text,
+                file_name=f"summary_report_{period_info['year_month']}.txt",
+                mime="text/plain"
+            )
+    
+    with col2:
+        if st.button("📊 CSVでダウンロード"):
+            # CSV形式でメトリクスを出力
+            csv_data = generate_csv_report(report)
+            st.download_button(
+                label="💾 ダウンロード",
+                data=csv_data,
+                file_name=f"summary_metrics_{period_info['year_month']}.csv",
+                mime="text/csv"
+            )
+
+
+def generate_text_report(report: Dict[str, Any]) -> str:
+    """テキスト形式のレポート生成"""
+    period = report["period"]
+    text = f"""
+週次・月次サマリーレポート
+{'='*60}
+
+期間: {period['start_date'].strftime('%Y/%m/%d')} - {period['end_date'].strftime('%Y/%m/%d')}
+生成日時: {datetime.now().strftime('%Y/%m/%d %H:%M')}
+
+{'='*60}
+エグゼクティブサマリー
+{'='*60}
+
+{report.get('section_1_executive_summary', 'サマリーなし')}
+
+{'='*60}
+主要KPI
+{'='*60}
+
+"""
+    
+    metrics = report["section_3_kpis"]["metrics"]
+    text += f"""
+コスト: ¥{metrics['cost']:,.0f}
+CV数: {metrics['conversions']:,.0f}件
+CPA: ¥{metrics['cpa']:,.0f}
+CVR: {metrics['cvr']:.2%}
+CTR: {metrics['ctr']:.2%}
+"""
+    
+    return text
+
+
+def generate_csv_report(report: Dict[str, Any]) -> str:
+    """CSV形式のレポート生成"""
+    import io
+    import pandas as pd
+    
+    metrics = report["section_3_kpis"]["metrics"]
+    
+    data = {
+        "指標": ["コスト", "CV数", "CPA", "CVR", "CTR", "Impressions", "Clicks", "CPC"],
+        "値": [
+            metrics['cost'],
+            metrics['conversions'],
+            metrics['cpa'],
+            metrics['cvr'],
+            metrics['ctr'],
+            metrics['impressions'],
+            metrics['clicks'],
+            metrics['cpc']
+        ]
+    }
+    
+    df = pd.DataFrame(data)
+    
+    return df.to_csv(index=False, encoding='utf-8-sig')
+
 
 # =========================================================================
 # メイン表示モード（設定対応版）
@@ -941,7 +1481,19 @@ def main():
         st.header("🎛️ システム制御")
         
         # 表示モード選択
-        view_options = ["📊 統合分析レポート", "💡 戦略提案 & シミュレーション", "📈 パフォーマンス診断", "🔮 予測分析 & 異常検知", "🧠 自動インサイト分析", "📊 ダッシュボード表示", "🤖 AI分析", "⚙️ 手動SQL実行", "🩺 システム診断", "📈 監視ダッシュボード", "🔬 環境デバッグ"]
+        view_options = [
+            "📊 統合分析レポート", 
+            "📅 週次・月次サマリー",
+            "💡 戦略提案 & シミュレーション", 
+            "📈 パフォーマンス診断", 
+            "🔮 予測分析 & 異常検知", 
+            "🧠 自動インサイト分析", 
+            "📊 ダッシュボード表示", 
+            "🤖 AI分析", 
+            "⚙️ 手動SQL実行", 
+            "🩺 システム診断", 
+            "📈 監視ダッシュボード", 
+            "🔬 環境デバッグ"]
         st.session_state.view_mode = st.selectbox(
             "表示モード選択",
             view_options,
@@ -1057,6 +1609,11 @@ def main():
                     show_comprehensive_report_mode() # 引数なしで呼び出す
                 else:
                     st.error("❌ 統合分析モジュールがロードされていません。")
+            elif st.session_state.view_mode == "📅 週次・月次サマリー":
+                if IMPORT_STATUS.get("summary_system"):
+                    show_summary_mode()  
+                else:
+                    st.error("❌ サマリー機能がロードされていません。")
             elif st.session_state.view_mode == "💡 戦略提案 & シミュレーション":
                 if IMPORT_STATUS.get("strategy_simulator"):
                     run_strategy_simulation()

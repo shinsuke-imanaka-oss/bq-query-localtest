@@ -106,6 +106,7 @@ def find_key_drivers_safe(
 
     # 設定オブジェクトから動的にテーブル名を生成
     ANALYSIS_MAP = {
+        "予算": (settings.bigquery.get_full_table_name("budget"), "AccountBudgetIncludingFees"),
         "デバイス": (settings.bigquery.get_full_table_name("campaign_device"), "DeviceCategory"),
         "メディア": (settings.bigquery.get_full_table_name("campaign"), "ServiceNameJA_Media"),
         "キャンペーン": (settings.bigquery.get_full_table_name("campaign"), "CampaignName"),
