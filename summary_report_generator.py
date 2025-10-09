@@ -602,6 +602,20 @@ class SummaryReportGenerator:
 - CVR: {comp['cvr']['trend_text'] if 'cvr' in comp else 'N/A'}
 """
         
+        # ハイライトデータの安全な取得
+        best_campaign_name = 'N/A'
+        best_campaign_cpa = 'N/A'
+        worst_campaign_name = 'N/A'
+        worst_campaign_cpa = 'N/A'
+        
+        if highlights.get('best_campaign'):
+            best_campaign_name = highlights['best_campaign'].get('campaign_name', 'N/A')
+            best_campaign_cpa = f"¥{highlights['best_campaign'].get('cpa', 0):,.0f}"
+        
+        if highlights.get('worst_campaign'):
+            worst_campaign_name = highlights['worst_campaign'].get('campaign_name', 'N/A')
+            worst_campaign_cpa = f"¥{highlights['worst_campaign'].get('cpa', 0):,.0f}"
+        
         prompt = f"""
 あなたはデータドリブンなデジタルマーケティングアナリストです。以下のデータを分析し、事実ベースのエグゼクティブサマリーを生成してください。
 
@@ -635,10 +649,10 @@ class SummaryReportGenerator:
 {comparison_text}
 
 ## ハイライト
-- 最高パフォーマンスキャンペーン: {highlights.get('best_campaign', {}).get('campaign_name', 'N/A') if highlights.get('best_campaign') else 'N/A'}
-  CPA: ¥{highlights.get('best_campaign', {}).get('cpa', 0):,.0f} if highlights.get('best_campaign') else 'N/A'}
-- 最低パフォーマンスキャンペーン: {highlights.get('worst_campaign', {}).get('campaign_name', 'N/A') if highlights.get('worst_campaign') else 'N/A'}
-  CPA: ¥{highlights.get('worst_campaign', {}).get('cpa', 0):,.0f} if highlights.get('worst_campaign') else 'N/A'}
+- 最高パフォーマンスキャンペーン: {best_campaign_name}
+  CPA: {best_campaign_cpa}
+- 最低パフォーマンスキャンペーン: {worst_campaign_name}
+  CPA: {worst_campaign_cpa}
 
 ---
 
