@@ -19,6 +19,8 @@ from google.cloud import bigquery
 
 from targets_manager import TargetsManager
 from achievement_analyzer import AchievementAnalyzer
+from comparative_analyzer import ComparativeAnalyzer
+from action_recommender import ActionRecommender
 
 
 class SummaryReportGenerator:
@@ -38,7 +40,10 @@ class SummaryReportGenerator:
         self.claude_client = claude_client
         self.targets_manager = TargetsManager()
         self.analyzer = AchievementAnalyzer()
-    
+        # ===== 【追加】Phase 3用の分析器 =====
+        self.comparative_analyzer = None  # generate_report内で初期化
+        self.action_recommender = ActionRecommender()
+
     def generate_report(
         self,
         start_date,  # datetime または date
@@ -107,6 +112,42 @@ class SummaryReportGenerator:
         
         # 8. ハイライト洞察生成（AI）
         report["highlights_insights"] = self._generate_highlights_insights(report)
+        
+        # 9. Phase 3: キャンペーンデータの準備
+        st.info("📊 キャンペーンデータを準備中...")
+        campaigns_data = self._prepare_campaign_data(data)
+        
+        # 10. セクション6: パフォーマンス比較分析
+        st.info("📊 パフォーマンス比較分析中...")
+        report["section_6_comparative_analysis"] = self._generate_comparative_analysis(
+            campaigns_data, 
+            min_campaigns_for_comparison
+        )
+        
+        # 11. セクション7: アクション提案
+        st.info("🎯 アクション提案を生成中...")
+        
+        # 全体指標を準備
+        overall_metrics = {
+            'overall_roas': actuals.get('roas', 0),
+            'target_roas': targets.get('target_roas', 0) if targets else 0,
+            'budget_usage_pct': (
+                (actuals.get('cost', 0) / targets.get('budget', 1) * 100) 
+                if targets and targets.get('budget', 0) > 0 
+                else 0
+            ),
+            'overall_cpa': actuals.get('cpa', 0),
+            'target_cpa': targets.get('target_cpa', 0) if targets else 0,
+        }
+        
+        report["section_7_action_recommendations"] = self._generate_action_recommendations(
+            report["section_6_comparative_analysis"],
+            overall_metrics
+        )
+        
+        # ========== Phase 3: ここまで追加 ==========
+        
+        st.success("✅ レポート生成完了")
         
         return report
     
@@ -595,12 +636,12 @@ class SummaryReportGenerator:
         if "comparison" in report and report["comparison"]["has_comparison"]:
             comp = report["comparison"]["comparisons"]
             comparison_text = f"""
-## 前期間比較
-- コスト: {comp['cost']['trend_text'] if 'cost' in comp else 'N/A'}
-- CV数: {comp['conversions']['trend_text'] if 'conversions' in comp else 'N/A'}
-- CPA: {comp['cpa']['trend_text'] if 'cpa' in comp else 'N/A'}
-- CVR: {comp['cvr']['trend_text'] if 'cvr' in comp else 'N/A'}
-"""
+        ## 前期間比較
+        - コスト: {comp['cost']['trend_text'] if 'cost' in comp else 'N/A'}
+        - CV数: {comp['conversions']['trend_text'] if 'conversions' in comp else 'N/A'}
+        - CPA: {comp['cpa']['trend_text'] if 'cpa' in comp else 'N/A'}
+        - CVR: {comp['cvr']['trend_text'] if 'cvr' in comp else 'N/A'}
+        """
         
         # ハイライトデータの安全な取得
         best_campaign_name = 'N/A'
@@ -617,66 +658,66 @@ class SummaryReportGenerator:
             worst_campaign_cpa = f"¥{highlights['worst_campaign'].get('cpa', 0):,.0f}"
         
         prompt = f"""
-あなたはデータドリブンなデジタルマーケティングアナリストです。以下のデータを分析し、事実ベースのエグゼクティブサマリーを生成してください。
+        あなたはデータドリブンなデジタルマーケティングアナリストです。以下のデータを分析し、事実ベースのエグゼクティブサマリーを生成してください。
 
-# 厳守事項:
-1. **事実**: データから直接読み取れることのみ記述
-2. **解釈**: 複数の事実から論理的に導かれることを記述
-3. **仮説**: 「可能性がある」「考えられる」と明記し、検証方法をセット
-4. **禁止**: データ外の憶測、検証不可能な推測、主観的評価
+        # 厳守事項:
+        1. **事実**: データから直接読み取れることのみ記述
+        2. **解釈**: 複数の事実から論理的に導かれることを記述
+        3. **仮説**: 「可能性がある」「考えられる」と明記し、検証方法をセット
+        4. **禁止**: データ外の憶測、検証不可能な推測、主観的評価
 
-# 仮説提示レベル:
-✅ Aレベル（控えめ）: 「〜に何らかの課題がある可能性」
-✅ Bレベル（具体的）: 「A、B、Cのいずれかに課題がある可能性」
-❌ Cレベル（詳細すぎ）: 「過去ケースではAが原因」← 使用禁止
+        # 仮説提示レベル:
+        ✅ Aレベル（控えめ）: 「〜に何らかの課題がある可能性」
+        ✅ Bレベル（具体的）: 「A、B、Cのいずれかに課題がある可能性」
+        ❌ Cレベル（詳細すぎ）: 「過去ケースではAが原因」← 使用禁止
 
----
+        ---
 
-# データ
-期間: {report['period']['start_date'].strftime('%Y/%m/%d')} - {report['period']['end_date'].strftime('%Y/%m/%d')}
+        # データ
+        期間: {report['period']['start_date'].strftime('%Y/%m/%d')} - {report['period']['end_date'].strftime('%Y/%m/%d')}
 
-## 実績
-- コスト: ¥{kpis['metrics']['cost']:,.0f}
-- CV数: {kpis['metrics']['conversions']:,.0f}件
-- CPA: ¥{kpis['metrics']['cpa']:,.0f}
-- CVR: {kpis['metrics']['cvr']:.2%}
-- CTR: {kpis['metrics']['ctr']:.2%}
+        ## 実績
+        - コスト: ¥{kpis['metrics']['cost']:,.0f}
+        - CV数: {kpis['metrics']['conversions']:,.0f}件
+        - CPA: ¥{kpis['metrics']['cpa']:,.0f}
+        - CVR: {kpis['metrics']['cvr']:.2%}
+        - CTR: {kpis['metrics']['ctr']:.2%}
 
-## 予算消化状況
-{achievement['budget_pacing']['pace_status_text']}
-{"（目標: ¥" + f"{achievement['budget_pacing']['target_budget']:,.0f}）" if achievement['budget_pacing']['has_target'] else ""}
+        ## 予算消化状況
+        {achievement['budget_pacing']['pace_status_text']}
+        {"（目標: ¥" + f"{achievement['budget_pacing']['target_budget']:,.0f}）" if achievement['budget_pacing']['has_target'] else ""}
 
-{comparison_text}
+        {comparison_text}
 
-## ハイライト
-- 最高パフォーマンスキャンペーン: {best_campaign_name}
-  CPA: {best_campaign_cpa}
-- 最低パフォーマンスキャンペーン: {worst_campaign_name}
-  CPA: {worst_campaign_cpa}
+        ## ハイライト
+        - 最高パフォーマンスキャンペーン: {best_campaign_name}
+        CPA: {best_campaign_cpa}
+        - 最低パフォーマンスキャンペーン: {worst_campaign_name}
+        CPA: {worst_campaign_cpa}
 
----
+        ---
 
-# 出力形式（簡潔に3-4文）:
+        # 出力形式（簡潔に3-4文）:
 
-**📊 事実（データから読み取れること）**
-(数値データから直接読み取れる変化・状況)
+        **📊 事実（データから読み取れること）**
+        (数値データから直接読み取れる変化・状況)
 
-**💡 解釈（論理的に導かれること）**
-(複数の事実を組み合わせた状況説明)
+        **💡 解釈（論理的に導かれること）**
+        (複数の事実を組み合わせた状況説明)
 
-**🔍 仮説（可能性のある要因 - A-Bレベル）**
-(考えられる要因を1-2つ、「可能性がある」と明記)
+        **🔍 仮説（可能性のある要因 - A-Bレベル）**
+        (考えられる要因を1-2つ、「可能性がある」と明記)
 
-**✅ 推奨アクション**
-(最も優先度が高い施策を1つ、具体的に提案)
-(検証方法や期待効果も簡潔に記載)
+        **✅ 推奨アクション**
+        (最も優先度が高い施策を1つ、具体的に提案)
+        (検証方法や期待効果も簡潔に記載)
 
-# 注意事項:
-- 数値は必ず記載されているものを使用
-- 「〜と思われる」「おそらく」などの曖昧な表現は使用しない
-- 仮説には必ず「可能性」「考えられる」を付ける
-- データで確認できないことは書かない
-"""
+        # 注意事項:
+        - 数値は必ず記載されているものを使用
+        - 「〜と思われる」「おそらく」などの曖昧な表現は使用しない
+        - 仮説には必ず「可能性」「考えられる」を付ける
+        - データで確認できないことは書かない
+        """
         return prompt
     
     def _generate_simple_summary(self, report: Dict[str, Any]) -> str:
@@ -693,18 +734,18 @@ class SummaryReportGenerator:
         achievement = report["section_2_achievement"]
         
         summary = f"""
-**📊 現状の要約**
-期間中のコストは¥{kpis['metrics']['cost']:,.0f}、CV数は{kpis['metrics']['conversions']:,.0f}件、CPAは¥{kpis['metrics']['cpa']:,.0f}でした。
-予算消化ペースは{achievement['budget_pacing']['pace_status_text']}です。
+        **📊 現状の要約**
+        期間中のコストは¥{kpis['metrics']['cost']:,.0f}、CV数は{kpis['metrics']['conversions']:,.0f}件、CPAは¥{kpis['metrics']['cpa']:,.0f}でした。
+        予算消化ペースは{achievement['budget_pacing']['pace_status_text']}です。
 
-**💡 成功と課題の要因**
-全体的なパフォーマンスは安定しており、主要KPIは目標水準を維持しています。
+        **💡 成功と課題の要因**
+        全体的なパフォーマンスは安定しており、主要KPIは目標水準を維持しています。
 
-**🎯 推奨アクション**
-引き続き現在の施策を継続しつつ、低パフォーマンスキャンペーンの改善を検討してください。
-"""
+        **🎯 推奨アクション**
+        引き続き現在の施策を継続しつつ、低パフォーマンスキャンペーンの改善を検討してください。
+        """
         return summary.strip()
-    
+            
     def _generate_kpi_insights(self, report: Dict[str, Any]) -> str:
         """
         KPI分析の洞察を生成
@@ -726,45 +767,45 @@ class SummaryReportGenerator:
         if "comparison" in report and report["comparison"]["has_comparison"]:
             comp = report["comparison"]["comparisons"]
             comparison_data = f"""
-前期間比較:
-- CPA変化: {comp.get('cpa', {}).get('change_rate', 0) * 100:.1f}%
-- CVR変化: {comp.get('cvr', {}).get('change_rate', 0) * 100:.1f}%
-- CTR変化: {comp.get('ctr', {}).get('change_rate', 0) * 100:.1f}%
-"""
-        
-        prompt = f"""
-以下のKPIデータを分析し、事実ベースの洞察を提供してください。
+            前期間比較:
+            - CPA変化: {comp.get('cpa', {}).get('change_rate', 0) * 100:.1f}%
+            - CVR変化: {comp.get('cvr', {}).get('change_rate', 0) * 100:.1f}%
+            - CTR変化: {comp.get('ctr', {}).get('change_rate', 0) * 100:.1f}%
+            """
+                    
+            prompt = f"""
+            以下のKPIデータを分析し、事実ベースの洞察を提供してください。
 
-# データ
-CPA: ¥{kpis['cpa']:,.0f}
-CVR: {kpis['cvr']:.2%}
-CTR: {kpis['ctr']:.2%}
-CPC: ¥{kpis['cpc']:,.0f}
+            # データ
+            CPA: ¥{kpis['cpa']:,.0f}
+            CVR: {kpis['cvr']:.2%}
+            CTR: {kpis['ctr']:.2%}
+            CPC: ¥{kpis['cpc']:,.0f}
 
-{comparison_data}
+            {comparison_data}
 
-# 出力形式（2-3文）:
-📊 **事実**: (数値から読み取れること)
-💡 **解釈**: (論理的に導かれること)
-🔍 **注目点**: (特に注意すべき指標があれば)
+            # 出力形式（2-3文）:
+            📊 **事実**: (数値から読み取れること)
+            💡 **解釈**: (論理的に導かれること)
+            🔍 **注目点**: (特に注意すべき指標があれば)
 
-注意: データに基づく事実のみを記述してください。
-"""
-        
-        try:
-            if self.claude_client:
-                response = self.claude_client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                return response.content[0].text
-            elif self.gemini_client:
-                response = self.gemini_client.generate_content(prompt)
-                return response.text
-        except Exception as e:
-            st.warning(f"⚠️ KPI洞察の生成に失敗: {e}")
-            return ""
+            注意: データに基づく事実のみを記述してください。
+            """
+                    
+            try:
+                if self.claude_client:
+                    response = self.claude_client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=500,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    return response.content[0].text
+                elif self.gemini_client:
+                    response = self.gemini_client.generate_content(prompt)
+                    return response.text
+            except Exception as e:
+                st.warning(f"⚠️ KPI洞察の生成に失敗: {e}")
+                return ""
     
     def _generate_highlights_insights(self, report: Dict[str, Any]) -> str:
         """
@@ -790,31 +831,31 @@ CPC: ¥{kpis['cpc']:,.0f}
         cpa_diff = ((worst['cpa'] - best['cpa']) / best['cpa'] * 100) if best['cpa'] > 0 else 0
         
         prompt = f"""
-高パフォーマンスと低パフォーマンスのキャンペーンを分析してください。
+        高パフォーマンスと低パフォーマンスのキャンペーンを分析してください。
 
-# データ
-## 最高パフォーマンス
-- キャンペーン: {best['campaign_name']}
-- CPA: ¥{best['cpa']:,.0f}
-- CV数: {best['conversions']:.0f}件
+        # データ
+        ## 最高パフォーマンス
+        - キャンペーン: {best['campaign_name']}
+        - CPA: ¥{best['cpa']:,.0f}
+        - CV数: {best['conversions']:.0f}件
 
-## 最低パフォーマンス
-- キャンペーン: {worst['campaign_name']}
-- CPA: ¥{worst['cpa']:,.0f}
-- CV数: {worst['conversions']:.0f}件
+        ## 最低パフォーマンス
+        - キャンペーン: {worst['campaign_name']}
+        - CPA: ¥{worst['cpa']:,.0f}
+        - CV数: {worst['conversions']:.0f}件
 
-## 差異
-- CPA差: {cpa_diff:+.1f}%
+        ## 差異
+        - CPA差: {cpa_diff:+.1f}%
 
-# 出力形式（2-3文）:
-📊 **事実**: (CPAの差とその規模)
-🔍 **仮説**: (差が生じている可能性のある要因 - A-Bレベル)
-✅ **検証方法**: (仮説を確認する方法)
+        # 出力形式（2-3文）:
+        📊 **事実**: (CPAの差とその規模)
+        🔍 **仮説**: (差が生じている可能性のある要因 - A-Bレベル)
+        ✅ **検証方法**: (仮説を確認する方法)
 
-注意: 
-- 「可能性がある」「考えられる」を必ず付ける
-- 検証可能な仮説のみ提示
-"""
+        注意: 
+        - 「可能性がある」「考えられる」を必ず付ける
+        - 検証可能な仮説のみ提示
+        """
         
         try:
             if self.claude_client:
@@ -830,6 +871,245 @@ CPC: ¥{kpis['cpc']:,.0f}
         except Exception as e:
             st.warning(f"⚠️ ハイライト洞察の生成に失敗: {e}")
             return ""
+    
+    def _prepare_campaign_data(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        生のデータフレームからキャンペーン単位のデータを準備
+        
+        Args:
+            df: BigQueryから取得したデータフレーム
+            
+        Returns:
+            キャンペーン単位のデータリスト
+        """
+        try:
+            # データフレームのコピーを作成
+            df_copy = df.copy()
+            
+            # 数値型に変換
+            numeric_columns = ['cost', 'conversions', 'clicks', 'impressions']
+            for col in numeric_columns:
+                if col in df_copy.columns:
+                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').fillna(0)
+            
+            # キャンペーン名が存在しない場合のチェック
+            if 'campaign_name' not in df_copy.columns:
+                st.warning("⚠️ campaign_nameカラムが見つかりません。比較分析をスキップします。")
+                return []
+            
+            # キャンペーン単位で集計
+            campaign_agg = df_copy.groupby('campaign_name').agg({
+                'cost': 'sum',
+                'conversions': 'sum',
+                'clicks': 'sum',
+                'impressions': 'sum'
+            }).reset_index()
+            
+            # CPA、ROAS、CVR、CTRを計算
+            campaign_agg['cpa'] = campaign_agg.apply(
+                lambda row: float(row['cost'] / row['conversions']) if row['conversions'] > 0 else 0.0,
+                axis=1
+            )
+            
+            # ROASの計算（仮に1コンバージョンあたり10,000円の価値と仮定）
+            # ※実際の実装では、conversion_valueを使用してください
+            campaign_agg['roas'] = campaign_agg.apply(
+                lambda row: float(row['conversions'] * 10000 / row['cost']) if row['cost'] > 0 else 0.0,
+                axis=1
+            )
+            
+            campaign_agg['conversion_rate'] = campaign_agg.apply(
+                lambda row: float(row['conversions'] / row['clicks']) if row['clicks'] > 0 else 0.0,
+                axis=1
+            )
+            
+            campaign_agg['click_rate'] = campaign_agg.apply(
+                lambda row: float(row['clicks'] / row['impressions']) if row['impressions'] > 0 else 0.0,
+                axis=1
+            )
+            
+            # NaN/Infを0に置換
+            campaign_agg = campaign_agg.fillna(0)
+            campaign_agg = campaign_agg.replace([float('inf'), -float('inf')], 0)
+            
+            # 辞書のリストに変換
+            campaigns_data = []
+            for _, row in campaign_agg.iterrows():
+                campaigns_data.append({
+                    'campaign_name': str(row['campaign_name']),
+                    'cost': float(row['cost']),
+                    'conversions': int(row['conversions']),
+                    'clicks': int(row['clicks']),
+                    'impressions': int(row['impressions']),
+                    'cpa': float(row['cpa']),
+                    'roas': float(row['roas']),
+                    'conversion_rate': float(row['conversion_rate']),
+                    'click_rate': float(row['click_rate'])
+                })
+            
+            st.info(f"✅ {len(campaigns_data)}件のキャンペーンデータを準備しました")
+            return campaigns_data
+            
+        except Exception as e:
+            st.error(f"❌ キャンペーンデータ準備エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            return []
+
+
+    def _generate_comparative_analysis(
+        self,
+        campaigns_data: List[Dict[str, Any]],
+        min_campaigns: int
+    ) -> 'ComparativeAnalysis':
+        """
+        セクション6: パフォーマンス比較分析を生成
+        
+        Args:
+            campaigns_data: キャンペーンデータのリスト
+            min_campaigns: 比較分析に必要な最低キャンペーン数
+            
+        Returns:
+            ComparativeAnalysis: 比較分析結果
+        """
+        from comparative_analyzer import ComparativeAnalyzer
+        
+        try:
+            # Analyzerを初期化
+            self.comparative_analyzer = ComparativeAnalyzer(
+                min_campaigns_per_group=min_campaigns
+            )
+            
+            # 分析実行
+            analysis = self.comparative_analyzer.analyze(campaigns_data)
+            
+            # 分析がスキップされた場合
+            if analysis.skipped:
+                st.warning(f"⚠️ {analysis.skip_reason}")
+                return analysis
+            
+            # AI分析が必要な場合（スキップされていない場合のみ）
+            if self.claude_client or self.gemini_client:
+                try:
+                    st.info("🤖 比較分析のAI洞察を生成中...")
+                    ai_prompt = self.comparative_analyzer.generate_ai_prompt(analysis)
+                    
+                    # Claudeを優先的に使用
+                    if self.claude_client:
+                        response = self.claude_client.messages.create(
+                            model="claude-sonnet-4-20250514",
+                            max_tokens=1500,
+                            messages=[{"role": "user", "content": ai_prompt}]
+                        )
+                        analysis.ai_insights = response.content[0].text
+                    
+                    # Geminiをフォールバック
+                    elif self.gemini_client:
+                        response = self.gemini_client.generate_content(ai_prompt)
+                        analysis.ai_insights = response.text
+                    
+                    st.success("✅ AI洞察を生成しました")
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ AI分析生成に失敗しました: {e}")
+                    analysis.ai_insights = None
+            
+            return analysis
+            
+        except Exception as e:
+            st.error(f"❌ 比較分析生成エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            
+            # エラー時は空の分析結果を返す
+            from comparative_analyzer import ComparativeAnalysis
+            return ComparativeAnalysis(
+                high_performers=[],
+                low_performers=[],
+                significant_differences=[],
+                analysis_summary={},
+                skipped=True,
+                skip_reason=f"エラーが発生しました: {str(e)}"
+            )
+
+
+    def _generate_action_recommendations(
+        self,
+        comparative_analysis: 'ComparativeAnalysis',
+        overall_metrics: Dict[str, Any]
+    ) -> 'ActionRecommendations':
+        """
+        セクション7: アクション提案を生成
+        
+        Args:
+            comparative_analysis: 比較分析結果
+            overall_metrics: 全体指標
+            
+        Returns:
+            ActionRecommendations: アクション提案セット
+        """
+        try:
+            # アクション提案を生成
+            recommendations = self.action_recommender.generate_recommendations(
+                comparative_analysis,
+                overall_metrics
+            )
+            
+            # 比較分析がスキップされた場合
+            if comparative_analysis.skipped:
+                st.warning("⚠️ 比較分析がスキップされたため、アクション提案も制限されます")
+                return recommendations
+            
+            # アクションが存在しない場合
+            if not recommendations.actions:
+                st.info("ℹ️ 生成されたアクション提案はありません")
+                return recommendations
+            
+            # AI分析が必要な場合（アクションが存在する場合のみ）
+            if self.claude_client or self.gemini_client:
+                try:
+                    st.info("🤖 アクション提案のAI洞察を生成中...")
+                    ai_prompt = self.action_recommender.generate_ai_prompt(
+                        recommendations,
+                        comparative_analysis
+                    )
+                    
+                    # Claudeを優先的に使用
+                    if self.claude_client:
+                        response = self.claude_client.messages.create(
+                            model="claude-sonnet-4-20250514",
+                            max_tokens=1500,
+                            messages=[{"role": "user", "content": ai_prompt}]
+                        )
+                        recommendations.ai_insights = response.content[0].text
+                    
+                    # Geminiをフォールバック
+                    elif self.gemini_client:
+                        response = self.gemini_client.generate_content(ai_prompt)
+                        recommendations.ai_insights = response.text
+                    
+                    st.success("✅ AI洞察を生成しました")
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ AI分析生成に失敗しました: {e}")
+                    recommendations.ai_insights = None
+            
+            return recommendations
+            
+        except Exception as e:
+            st.error(f"❌ アクション提案生成エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            
+            # エラー時は空の提案を返す
+            from action_recommender import ActionRecommendations
+            return ActionRecommendations(
+                actions=[],
+                summary=f"エラーが発生しました: {str(e)}",
+                high_priority_count=0,
+                medium_priority_count=0,
+                low_priority_count=0
+            )
 
 
 # テスト用コード
