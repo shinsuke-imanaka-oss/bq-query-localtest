@@ -1,11 +1,12 @@
 """
+display_functions.py
 Streamlit表示関数の拡張（Phase 3対応）
-既存の表示関数に追加してください
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from typing import Dict, Any  # ← この行を追加
 from comparative_analyzer import ComparativeAnalysis
 from action_recommender import ActionRecommendations, Priority
 

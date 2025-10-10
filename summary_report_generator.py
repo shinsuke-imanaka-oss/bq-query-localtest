@@ -49,7 +49,8 @@ class SummaryReportGenerator:
         start_date,  # datetime または date
         end_date,    # datetime または date
         comparison_mode: str = "none",
-        table_id: str = "your-project.your-dataset.your-table"
+        table_id: str = "your-project.your-dataset.your-table",
+        min_campaigns_for_comparison: int = 3
     ) -> Dict[str, Any]:
         """
         レポートを生成

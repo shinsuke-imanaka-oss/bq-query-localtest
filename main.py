@@ -20,7 +20,6 @@ from error_handler import handle_error_with_ai
 # from troubleshooter import display_troubleshooting_guide
 from display_functions import display_comparative_analysis, display_action_recommendations
 
-
 # =========================================================================
 # ページ設定（最初に実行）
 # =========================================================================
@@ -932,11 +931,11 @@ def display_summary_report(report: Dict[str, Any], config: Dict[str, Any]):
     if "section_7_action_recommendations" in report:
         display_action_recommendations(report["section_7_action_recommendations"])
 
-        # ハイライト洞察を表示（Phase 2）
-        if report.get("highlights_insights"):
-            st.markdown("---")
-            with st.expander("💡 パフォーマンス差の分析", expanded=True):
-                st.markdown(report["highlights_insights"])
+    # ハイライト洞察を表示（Phase 2）
+    if report.get("highlights_insights"):
+        st.markdown("---")
+        with st.expander("💡 パフォーマンス差の分析", expanded=True):
+            st.markdown(report["highlights_insights"])
     
     # エクスポート機能
     st.markdown("---")
